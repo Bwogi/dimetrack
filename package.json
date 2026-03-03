@@ -1,0 +1,22 @@
+{
+  "name": "dimetrack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "cli": "node cli.js",
+    "cli:watch": "node --watch cli.js",
+    "tui": "node tui.js",
+    "tui:watch": "node --watch tui.js"
+  },
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "ejs": "^3.1.10",
+    "express": "^4.19.2",
+    "pdfkit": "^0.17.2",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
+  }
+}

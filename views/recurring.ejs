@@ -1,0 +1,75 @@
+<%- include('partials/top', { today }) %>
+
+<div class="rounded-xl bg-slate-900 p-5 border border-slate-800">
+  <div class="font-semibold">Add recurring item</div>
+  <div class="text-xs text-slate-500 mt-1">Rent, subscriptions, paycheck, etc. Use “Post” to add it as a transaction and advance next due date.</div>
+
+  <form class="mt-4 grid grid-cols-1 md:grid-cols-8 gap-3" method="POST" action="/recurring">
+    <input name="name" placeholder="Name (Rent)" class="md:col-span-2 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
+    <select name="type" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800">
+      <option value="expense">expense</option>
+      <option value="income">income</option>
+    </select>
+    <input name="amount" placeholder="Amount" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
+    <input name="category" placeholder="Category" class="md:col-span-2 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
+    <select name="cadence" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800">
+      <option value="monthly">monthly</option>
+      <option value="weekly">weekly</option>
+    </select>
+    <input name="day_of_month" placeholder="DOM (1-31)" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" />
+    <input name="day_of_week" placeholder="DOW (0-6)" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" />
+    <input name="next_due_date" type="date" value="<%= today %>" class="md:col-span-2 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" />
+    <button class="md:col-span-2 px-3 py-2 rounded-lg bg-emerald-500 text-slate-950 font-semibold hover:bg-emerald-400" type="submit">Add recurring</button>
+  </form>
+
+  <div class="text-xs text-slate-500 mt-3">
+    Tip: For monthly items, fill DOM (day of month). For weekly items, fill DOW (0=Sun ... 6=Sat).
+  </div>
+</div>
+
+<div class="mt-6 rounded-xl bg-slate-900 p-5 border border-slate-800">
+  <div class="flex items-center justify-between">
+    <div class="font-semibold">Recurring items</div>
+    <div class="text-xs text-slate-500">Total: <%= rows.length %></div>
+  </div>
+
+  <div class="mt-4 overflow-x-auto">
+    <table class="min-w-full text-sm">
+      <thead>
+        <tr class="text-left text-slate-400">
+          <th class="py-2 pr-4">Name</th>
+          <th class="py-2 pr-4">Type</th>
+          <th class="py-2 pr-4">Cadence</th>
+          <th class="py-2 pr-4">Next due</th>
+          <th class="py-2 pr-4">Amount</th>
+          <th class="py-2 pr-4">Active</th>
+          <th class="py-2 pr-0"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% rows.forEach(r => { %>
+          <tr class="border-t border-slate-800">
+            <td class="py-2 pr-4 font-medium"><%= r.name %></td>
+            <td class="py-2 pr-4"><%= r.type %></td>
+            <td class="py-2 pr-4"><%= r.cadence %></td>
+            <td class="py-2 pr-4 whitespace-nowrap"><%= r.next_due_date %></td>
+            <td class="py-2 pr-4 <%= r.type === 'expense' ? 'text-rose-300' : 'text-emerald-300' %>"><%= formatCents(r.amount_cents) %></td>
+            <td class="py-2 pr-4">
+              <span class="px-2 py-1 rounded bg-slate-950 border border-slate-800"><%= r.active ? 'yes' : 'no' %></span>
+            </td>
+            <td class="py-2 pr-0 flex gap-2">
+              <form method="POST" action="/recurring/<%= r.id %>/post">
+                <button class="text-xs px-2 py-1 rounded bg-sky-300 text-slate-950 hover:bg-sky-200" type="submit" <%= r.active ? '' : 'disabled' %>>Post</button>
+              </form>
+              <form method="POST" action="/recurring/<%= r.id %>/toggle">
+                <button class="text-xs px-2 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800" type="submit"><%= r.active ? 'Pause' : 'Resume' %></button>
+              </form>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('partials/bottom') %>

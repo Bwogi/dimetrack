@@ -1,0 +1,93 @@
+<%- include('partials/top', { today }) %>
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+  <div class="rounded-xl bg-[#000000] p-5 border border-slate-800">
+    <div class="text-sm text-slate-400">This month income</div>
+    <div class="text-3xl font-semibold mt-2"><%= formatCents(dash.incomeCents) %></div>
+    <div class="text-xs text-slate-500 mt-1"><%= dash.monthStart %> to <%= dash.monthEnd %></div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-5 border border-slate-800">
+    <div class="text-sm text-slate-400">This month expenses</div>
+    <div class="text-3xl font-semibold mt-2"><%= formatCents(dash.expenseCents) %></div>
+    <div class="text-xs text-slate-500 mt-1"><%= dash.monthStart %> to <%= dash.monthEnd %></div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-5 border border-slate-800">
+    <div class="text-sm text-slate-400">Net</div>
+    <div class="text-3xl font-semibold mt-2"><%= formatCents(dash.netCents) %></div>
+    <div class="text-xs text-slate-500 mt-1">Income - expenses</div>
+  </div>
+</div>
+
+<div class="mt-6 rounded-xl bg-slate-900 p-5 border border-slate-800">
+  <div class="flex items-center justify-between gap-4">
+    <div>
+      <div class="font-semibold">Quick setup</div>
+      <div class="text-xs text-slate-500 mt-1">Creates recurring Rent (monthly on the 1st) and Car Payment ($470, due in 14 days).</div>
+    </div>
+  </div>
+
+  <form class="mt-4 flex flex-col md:flex-row gap-3" method="POST" action="/setup/defaults">
+    <input name="rent_amount" placeholder="Rent amount (e.g. 1850)" class="flex-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
+    <button class="px-3 py-2 rounded-lg bg-sky-300 text-slate-950 font-semibold hover:bg-sky-200" type="submit">Create / Update recurring</button>
+  </form>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+  <div class="rounded-xl bg-slate-900 p-5 border border-slate-800">
+    <div class="flex items-center justify-between">
+      <div class="font-semibold">Goals</div>
+      <a class="text-sm text-sky-300 hover:text-sky-200" href="/goals">Manage</a>
+    </div>
+
+    <% if (!dash.goals.length) { %>
+      <div class="text-slate-400 text-sm mt-3">No goals yet. Add one (e.g. Car payoff).</div>
+    <% } else { %>
+      <div class="mt-4 space-y-3">
+        <% dash.goals.forEach(g => { 
+          const pct = g.target_cents ? Math.min(100, Math.round((g.current_cents / g.target_cents) * 100)) : 0;
+        %>
+          <div class="rounded-lg bg-slate-950/50 p-3 border border-slate-800">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div class="font-medium"><%= g.name %></div>
+                <div class="text-xs text-slate-400"><%= formatCents(g.current_cents) %> / <%= formatCents(g.target_cents) %> (<%= pct %>%)</div>
+              </div>
+              <div class="w-24">
+                <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                  <div class="h-2 bg-emerald-500" <%- `style="width:${pct}%"` %>></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    <% } %>
+  </div>
+
+  <div class="rounded-xl bg-slate-900 p-5 border border-slate-800">
+    <div class="flex items-center justify-between">
+      <div class="font-semibold">Upcoming recurring</div>
+      <a class="text-sm text-sky-300 hover:text-sky-200" href="/recurring">Manage</a>
+    </div>
+
+    <% if (!dash.upcomingRecurring.length) { %>
+      <div class="text-slate-400 text-sm mt-3">No recurring items yet. Add rent, subscriptions, etc.</div>
+    <% } else { %>
+      <div class="mt-4 space-y-3">
+        <% dash.upcomingRecurring.forEach(r => { %>
+          <div class="rounded-lg bg-slate-950/50 p-3 border border-slate-800">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-medium"><%= r.name %></div>
+                <div class="text-xs text-slate-400"><%= r.next_due_date %> • <%= r.type %> • <%= formatCents(r.amount_cents) %></div>
+              </div>
+              <div class="text-xs text-slate-500"><%= r.cadence %></div>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    <% } %>
+  </div>
+</div>
+
+<%- include('partials/bottom') %>

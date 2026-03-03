@@ -1,0 +1,62 @@
+<%- include('partials/top', { today }) %>
+
+<div class="rounded-xl bg-slate-900 p-5 border border-slate-800">
+  <div class="font-semibold">Add goal</div>
+  <div class="text-xs text-slate-500 mt-1">Examples: Pay off car, Rent buffer, Emergency fund.</div>
+
+  <form class="mt-4 grid grid-cols-1 md:grid-cols-6 gap-3" method="POST" action="/goals">
+    <input name="name" placeholder="Goal name" class="md:col-span-2 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
+    <input name="target" placeholder="Target amount" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
+    <input name="due_date" type="date" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" />
+    <button class="md:col-span-2 px-3 py-2 rounded-lg bg-emerald-500 text-slate-950 font-semibold hover:bg-emerald-400" type="submit">Add goal</button>
+    <input name="note" placeholder="Note (optional)" class="md:col-span-6 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" />
+  </form>
+</div>
+
+<div class="mt-6 rounded-xl bg-slate-900 p-5 border border-slate-800">
+  <div class="font-semibold">Goals</div>
+
+  <% if (!rows.length) { %>
+    <div class="text-slate-400 text-sm mt-3">No goals yet.</div>
+  <% } else { %>
+    <div class="mt-4 space-y-4">
+      <% rows.forEach(g => { 
+        const pct = g.target_cents ? Math.min(100, Math.round((g.current_cents / g.target_cents) * 100)) : 0;
+      %>
+        <div class="rounded-lg bg-slate-950/50 p-4 border border-slate-800">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div class="min-w-0">
+              <div class="font-semibold"><%= g.name %></div>
+              <div class="text-xs text-slate-400 mt-1"><%= formatCents(g.current_cents) %> / <%= formatCents(g.target_cents) %> (<%= pct %>%)</div>
+              <% if (g.due_date) { %>
+                <div class="text-xs text-slate-500 mt-1">Due: <%= g.due_date %></div>
+              <% } %>
+              <% if (g.note) { %>
+                <div class="text-xs text-slate-500 mt-1"><%= g.note %></div>
+              <% } %>
+            </div>
+
+            <div class="flex-1">
+              <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                <div class="h-2 bg-emerald-500" style="width: <%= pct %>%;"></div>
+              </div>
+
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <form class="flex items-center gap-2" method="POST" action="/goals/<%= g.id %>/progress">
+                  <input name="amount" placeholder="Add progress ($)" class="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
+                  <button class="px-3 py-2 rounded-lg bg-sky-300 text-slate-950 font-semibold hover:bg-sky-200" type="submit">Add</button>
+                </form>
+
+                <form method="POST" action="/goals/<%= g.id %>/delete" onsubmit="return confirm('Delete this goal?')">
+                  <button class="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 hover:bg-slate-800" type="submit">Delete</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      <% }) %>
+    </div>
+  <% } %>
+</div>
+
+<%- include('partials/bottom') %>

@@ -1,0 +1,41 @@
+# dependencies
+node_modules/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# coverage
+automated-coverage/
+coverage/
+*.lcov
+.nyc_output/
+
+# build output
+.dist/
+dist/
+build/
+
+# env files
+.env
+.env.*
+
+# sqlite database
+*.db
+*.db-journal
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# misc
+*.swp

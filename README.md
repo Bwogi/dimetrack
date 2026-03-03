@@ -21,6 +21,16 @@ DimeTrack is intentionally simple: your data lives in a local SQLite database (`
 - **TUI**: `npm run tui` (terminal-first workflow).
 - **CLI**: `npm run cli` (scripting / quick checks).
 
+## Screenshots
+
+### Web UI
+
+![DimeTrack Web UI](assets/screenshots/web-transactions.png)
+
+### Terminal UI (TUI)
+
+![DimeTrack Terminal UI](assets/screenshots/tui-transactions.png)
+
 ## Quickstart
 
 ### Requirements

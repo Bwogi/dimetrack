@@ -1,13 +1,26 @@
 import blessed from 'blessed';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   addDays,
   addMonths,
+  autoPostOverdueRecurring,
+  estimateGasCost,
+  exportToCsv,
   formatCents,
   getDb,
+  getMonthlySpendByCategory,
+  getMonthlyTripSummary,
+  getVehicleSettings,
   initDb,
+  IRS_MILEAGE_RATE_CENTS,
   isoDateOnly,
   parseAmountToCents
 } from './db.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const THEME = {
   bg: '#000000',
@@ -62,6 +75,7 @@ async function computeDashboard(db, todayIso) {
 }
 
 function createFormPrompt({ screen, title, fields, onSubmit }) {
+  screen.saveFocus();
   const box = blessed.form({
     parent: screen,
     label: ` ${title} `,
@@ -120,6 +134,12 @@ function createFormPrompt({ screen, title, fields, onSubmit }) {
       inputs[f.name].on('submit', () => box.submit());
     }
 
+    inputs[f.name].key(['escape'], () => {
+      box.destroy();
+      screen.restoreFocus();
+      screen.render();
+    });
+
     y += 3;
   }
 
@@ -134,6 +154,7 @@ function createFormPrompt({ screen, title, fields, onSubmit }) {
 
   box.key(['escape'], () => {
     box.destroy();
+    screen.restoreFocus();
     screen.render();
   });
 
@@ -143,6 +164,7 @@ function createFormPrompt({ screen, title, fields, onSubmit }) {
       values[f.name] = inputs[f.name].getValue();
     }
     box.destroy();
+    screen.restoreFocus();
     screen.render();
     onSubmit(values);
   });
@@ -152,6 +174,7 @@ function createFormPrompt({ screen, title, fields, onSubmit }) {
 }
 
 function createConfirm({ screen, title, message, onYes }) {
+  screen.saveFocus();
   const box = blessed.box({
     parent: screen,
     label: ` ${title} `,
@@ -187,6 +210,7 @@ function createConfirm({ screen, title, message, onYes }) {
 
   const close = () => {
     box.destroy();
+    screen.restoreFocus();
     screen.render();
   };
 
@@ -201,6 +225,7 @@ function createConfirm({ screen, title, message, onYes }) {
 }
 
 function createSelectPrompt({ screen, title, options, initialIndex = 0, onSelect }) {
+  screen.saveFocus();
   const box = blessed.box({
     parent: screen,
     label: ` ${title} `,
@@ -246,6 +271,7 @@ function createSelectPrompt({ screen, title, options, initialIndex = 0, onSelect
 
   const close = () => {
     box.destroy();
+    screen.restoreFocus();
     screen.render();
   };
 
@@ -254,7 +280,8 @@ function createSelectPrompt({ screen, title, options, initialIndex = 0, onSelect
 
   list.on('select', (item, index) => {
     const value = options[index];
-    close();
+    box.destroy();
+    screen.render();
     onSelect(value, index);
   });
 
@@ -391,6 +418,7 @@ function createTableView({ parent, label }) {
 }
 
 function createMessage({ screen, title, message }) {
+  screen.saveFocus();
   const box = blessed.box({
     parent: screen,
     label: ` ${title} `,
@@ -421,11 +449,12 @@ function createMessage({ screen, title, message }) {
     top: 4,
     left: 2,
     fg: THEME.muted,
-    content: 'Press Esc to close'
+    content: 'Press Esc or Enter to close'
   });
 
-  box.key(['escape', 'enter'], () => {
+  box.key(['escape', 'enter', 'q'], () => {
     box.destroy();
+    screen.restoreFocus();
     screen.render();
   });
 
@@ -443,7 +472,16 @@ async function main() {
     useBCE: true
   });
 
-  screen.key(['C-c', 'q'], () => process.exit(0));
+  screen.key(['C-c'], () => process.exit(0));
+
+  screen.key(['q'], () => {
+    createConfirm({
+      screen,
+      title: 'Quit',
+      message: 'Are you sure you want to quit DimeTrack?',
+      onYes: () => process.exit(0)
+    });
+  });
 
   const backdrop = blessed.box({
     parent: screen,
@@ -465,7 +503,7 @@ async function main() {
     style: { bg: THEME.headerBg, fg: THEME.headerFg },
     content:
       ' {bold}DimeTrack{/bold}  ' +
-      '{gray-fg}Dashboard(d)  Transactions(t)  Recurring(r)  Goals(g)  Help(h)  Quit(q){/gray-fg}'
+      '{gray-fg}Dashboard(d)  Transactions(t)  Recurring(r)  Goals(g)  Budgets(b)  Trips(m)  Help(h){/gray-fg}'
   });
   void header;
 
@@ -479,7 +517,7 @@ async function main() {
     style: { bg: THEME.footerBg, fg: THEME.footerFg },
     content:
       ` {${THEME.footerFg}-fg}{bold}Shortcuts{/bold}{/${THEME.footerFg}-fg}  ` +
-      'a:add  del:delete/toggle  p:post recurring  Enter:view  /:filter (tx)'
+      'a:add  enter:edit  del:delete/toggle  p:post recur  /:filter  e:export  Tab:cycle  q:quit'
   });
   void footer;
 
@@ -525,7 +563,9 @@ async function main() {
 
     tx: createTableView({ parent: mainBox, label: 'Transactions' }),
     recurring: createTableView({ parent: mainBox, label: 'Recurring' }),
-    goals: createTableView({ parent: mainBox, label: 'Goals' })
+    goals: createTableView({ parent: mainBox, label: 'Goals' }),
+    budgets: createTableView({ parent: mainBox, label: 'Budgets' }),
+    trips: createTableView({ parent: mainBox, label: 'Trips & Mileage' })
   };
 
   function showView(name) {
@@ -538,7 +578,7 @@ async function main() {
       }
     }
 
-    if (name === 'tx' || name === 'recurring' || name === 'goals') {
+    if (name === 'tx' || name === 'recurring' || name === 'goals' || name === 'budgets' || name === 'trips') {
       view[name].list.focus();
     } else {
       view.dashboard.focus();
@@ -549,6 +589,11 @@ async function main() {
   }
 
   let txFilter = '';
+  let txDateFrom = '';
+  let txDateTo = '';
+  let recurringFilter = '';
+  let goalsFilter = '';
+  let tripsFilter = '';
 
   async function refreshDashboard() {
     const today = isoDateOnly(new Date());
@@ -582,6 +627,45 @@ async function main() {
       );
     }
 
+    const budgets = await db.all(`SELECT * FROM budgets ORDER BY type ASC, category ASC`);
+    if (budgets.length) {
+      const spending = await getMonthlySpendByCategory(db, dash.monthStart, dash.monthEnd);
+      const spendMap = {};
+      for (const s of spending) spendMap[s.category] = s.spent_cents;
+
+      const alerts = [];
+      for (const b of budgets) {
+        const spent = spendMap[b.category] || 0;
+        const pct = b.monthly_limit_cents ? Math.round((spent / b.monthly_limit_cents) * 100) : 0;
+        if (pct >= 80) {
+          const tag = pct >= 100 ? '{red-fg}OVER{/red-fg}' : '{yellow-fg}WARN{/yellow-fg}';
+          alerts.push(`  ${tag} ${b.category}: ${formatCents(spent)} / ${formatCents(b.monthly_limit_cents)} (${pct}%)`);
+        }
+      }
+      lines.push('');
+      lines.push('{bold}Budget Alerts{/bold}:');
+      if (!alerts.length) lines.push('  All budgets on track');
+      else for (const a of alerts) lines.push(a);
+    }
+
+    const tripStats = await getMonthlyTripSummary(db, dash.monthStart, dash.monthEnd);
+    if (tripStats.trip_count > 0) {
+      lines.push('');
+      lines.push('{bold}Trips & Mileage (this month){/bold}:');
+      lines.push(`  Trips: ${tripStats.trip_count}   Miles: ${tripStats.total_miles.toFixed(1)}`);
+      lines.push(`  Gas: ${formatCents(tripStats.total_gas_cents)}   Other costs: ${formatCents(tripStats.total_other_cents)}   Total cost: ${formatCents(tripStats.totalCost)}`);
+      lines.push(`  Income earned: ${formatCents(tripStats.total_income_cents)}`);
+      const netTag = tripStats.netProfit >= 0 ? '{green-fg}' : '{red-fg}';
+      const netClose = tripStats.netProfit >= 0 ? '{/green-fg}' : '{/red-fg}';
+      lines.push(`  Net profit: ${netTag}${formatCents(tripStats.netProfit)}${netClose}   Cost/mile: ${formatCents(tripStats.costPerMile)}   Profit/mile: ${formatCents(tripStats.profitPerMile)}`);
+      lines.push(`  IRS mileage deduction (${formatCents(IRS_MILEAGE_RATE_CENTS)}/mi): ${formatCents(tripStats.irsDeduction)}`);
+      const worthIt = tripStats.netProfit > 0;
+      const verdict = worthIt
+        ? '{green-fg}Trips are profitable this month{/green-fg}'
+        : '{red-fg}Trips are costing more than they earn{/red-fg}';
+      lines.push(`  Verdict: ${verdict}`);
+    }
+
     view.dashboard.setContent(lines.join('\n'));
   }
 
@@ -592,7 +676,15 @@ async function main() {
   }
 
   async function refreshTx() {
-    const rows = await db.all(`SELECT * FROM transactions ORDER BY date DESC, id DESC LIMIT 500`);
+    let query = `SELECT * FROM transactions`;
+    const params = [];
+    const clauses = [];
+    if (txDateFrom) { clauses.push(`date >= ?`); params.push(txDateFrom); }
+    if (txDateTo) { clauses.push(`date <= ?`); params.push(txDateTo); }
+    if (clauses.length) query += ` WHERE ` + clauses.join(' AND ');
+    query += ` ORDER BY date DESC, id DESC LIMIT 500`;
+
+    const rows = await db.all(query, params);
     const filtered = rows.filter(matchesFilter);
 
     view.tx.setData({
@@ -613,13 +705,27 @@ async function main() {
         t.note || ''
       ])
     });
-    setStatus(txFilter ? `Filter: ${txFilter} (${filtered.length}/${rows.length})` : `Transactions: ${rows.length}`);
+    if (!filtered.length) {
+      view.tx.list.setItems(['  (no transactions — press "a" to add one)']);
+    }
+    const parts = [];
+    if (txFilter) parts.push(`search: ${txFilter}`);
+    if (txDateFrom || txDateTo) parts.push(`date: ${txDateFrom || '*'} .. ${txDateTo || '*'}`);
+    const filterLabel = parts.length ? parts.join('  ') + ` (${filtered.length}/${rows.length})` : '';
+    setStatus(filterLabel || `Transactions: ${rows.length}`);
   }
 
   async function refreshRecurring() {
     const rows = await db.all(
       `SELECT * FROM recurring ORDER BY active DESC, next_due_date ASC, id DESC`
     );
+
+    const filtered = recurringFilter
+      ? rows.filter(r => {
+          const blob = `${r.name} ${r.type} ${r.category} ${r.cadence} ${r.next_due_date}`.toLowerCase();
+          return blob.includes(recurringFilter.toLowerCase());
+        })
+      : rows;
 
     view.recurring.setData({
       columns: [
@@ -632,7 +738,7 @@ async function main() {
         { title: 'Category', minWidth: 10, maxWidth: 18, weight: 2 },
         { title: 'Cadence', minWidth: 7, maxWidth: 8, weight: 1 }
       ],
-      rows: rows.map((r) => [
+      rows: filtered.map((r) => [
         String(r.id),
         r.active ? 'yes' : 'no',
         r.next_due_date,
@@ -643,11 +749,21 @@ async function main() {
         r.cadence
       ])
     });
-    setStatus(`Recurring: ${rows.length}`);
+    if (!filtered.length) {
+      view.recurring.list.setItems(['  (no recurring items — press "a" to add one)']);
+    }
+    setStatus(recurringFilter ? `Filter: ${recurringFilter} (${filtered.length}/${rows.length})` : `Recurring: ${rows.length}`);
   }
 
   async function refreshGoals() {
     const rows = await db.all(`SELECT * FROM goals ORDER BY created_at DESC`);
+
+    const filtered = goalsFilter
+      ? rows.filter(g => {
+          const blob = `${g.name} ${g.due_date || ''} ${g.note || ''}`.toLowerCase();
+          return blob.includes(goalsFilter.toLowerCase());
+        })
+      : rows;
 
     view.goals.setData({
       columns: [
@@ -658,7 +774,7 @@ async function main() {
         { title: '%', minWidth: 3, maxWidth: 4, weight: 1 },
         { title: 'Due', minWidth: 10, maxWidth: 12, weight: 2 }
       ],
-      rows: rows.map((g) => {
+      rows: filtered.map((g) => {
         const pct = g.target_cents ? Math.round((g.current_cents / g.target_cents) * 100) : 0;
         return [
           String(g.id),
@@ -670,7 +786,99 @@ async function main() {
         ];
       })
     });
-    setStatus(`Goals: ${rows.length}`);
+    if (!filtered.length) {
+      view.goals.list.setItems(['  (no goals — press "a" to add one)']);
+    }
+    setStatus(goalsFilter ? `Filter: ${goalsFilter} (${filtered.length}/${rows.length})` : `Goals: ${rows.length}`);
+  }
+
+  async function refreshBudgets() {
+    const today = isoDateOnly(new Date());
+    const { start, end } = monthRange(today);
+    const budgets = await db.all(`SELECT * FROM budgets ORDER BY type ASC, category ASC`);
+    const spending = await getMonthlySpendByCategory(db, start, end);
+    const spendMap = {};
+    for (const s of spending) spendMap[s.category] = s.spent_cents;
+
+    view.budgets.setData({
+      columns: [
+        { title: 'ID', minWidth: 3, maxWidth: 6, weight: 1 },
+        { title: 'Type', minWidth: 6, maxWidth: 8, weight: 1 },
+        { title: 'Category', minWidth: 10, maxWidth: 20, weight: 3 },
+        { title: 'Limit', minWidth: 10, maxWidth: 14, weight: 2 },
+        { title: 'Spent', minWidth: 10, maxWidth: 14, weight: 2 },
+        { title: 'Remaining', minWidth: 10, maxWidth: 14, weight: 2 },
+        { title: 'Status', minWidth: 8, maxWidth: 12, weight: 1 }
+      ],
+      rows: budgets.map((b) => {
+        const spent = spendMap[b.category] || 0;
+        const remaining = b.monthly_limit_cents - spent;
+        const pct = b.monthly_limit_cents ? Math.round((spent / b.monthly_limit_cents) * 100) : 0;
+        let status = 'OK';
+        if (pct >= 100) status = 'OVER';
+        else if (pct >= 80) status = 'WARN';
+        return [
+          String(b.id),
+          b.type,
+          b.category,
+          formatCents(b.monthly_limit_cents),
+          formatCents(spent),
+          formatCents(remaining),
+          `${status} (${pct}%)`
+        ];
+      })
+    });
+    if (!budgets.length) {
+      view.budgets.list.setItems(['  (no budgets — press "a" to set one)']);
+    }
+    setStatus(`Budgets: ${budgets.length} (${start} .. ${end})`);
+  }
+
+  async function refreshTrips() {
+    const rows = await db.all(`SELECT * FROM trips ORDER BY date DESC, id DESC LIMIT 500`);
+
+    const filtered = tripsFilter
+      ? rows.filter(t => {
+          const blob = `${t.destination} ${t.date} ${t.note || ''}`.toLowerCase();
+          return blob.includes(tripsFilter.toLowerCase());
+        })
+      : rows;
+
+    const vs = await getVehicleSettings(db);
+    view.trips.setData({
+      columns: [
+        { title: 'ID', minWidth: 3, maxWidth: 5, weight: 1 },
+        { title: 'Date', minWidth: 10, maxWidth: 11, weight: 2 },
+        { title: 'Destination', minWidth: 10, maxWidth: 22, weight: 3 },
+        { title: 'Odo Start', minWidth: 7, maxWidth: 9, weight: 1 },
+        { title: 'Odo End', minWidth: 7, maxWidth: 9, weight: 1 },
+        { title: 'Miles', minWidth: 5, maxWidth: 7, weight: 1 },
+        { title: 'Gas$', minWidth: 7, maxWidth: 10, weight: 1 },
+        { title: 'Income', minWidth: 7, maxWidth: 10, weight: 1 },
+        { title: 'Net', minWidth: 7, maxWidth: 10, weight: 1 }
+      ],
+      rows: filtered.map((t) => {
+        const totalCost = t.gas_cost_cents + t.other_cost_cents;
+        const net = t.income_cents - totalCost;
+        const gasLabel = t.gas_estimated ? `~${formatCents(t.gas_cost_cents)}` : formatCents(t.gas_cost_cents);
+        return [
+          String(t.id),
+          t.date,
+          t.destination,
+          t.odometer_start != null ? t.odometer_start.toFixed(0) : '-',
+          t.odometer_end != null ? t.odometer_end.toFixed(0) : '-',
+          t.miles.toFixed(1),
+          gasLabel,
+          formatCents(t.income_cents),
+          formatCents(net)
+        ];
+      })
+    });
+    if (!filtered.length) {
+      view.trips.list.setItems(['  (no trips — press "a" to log one)']);
+    }
+    const vInfo = vs ? `  |  Vehicle: ${vs.mpg} MPG, gas ${formatCents(vs.gas_price_cents)}/gal  (~${formatCents(IRS_MILEAGE_RATE_CENTS)}/mi IRS rate)  [v: settings]` : '';
+    setStatus((tripsFilter ? `Filter: ${tripsFilter} (${filtered.length}/${rows.length})` : `Trips: ${rows.length}`) + vInfo);
   }
 
   async function refresh() {
@@ -679,6 +887,8 @@ async function main() {
       if (currentView === 'tx') await refreshTx();
       if (currentView === 'recurring') await refreshRecurring();
       if (currentView === 'goals') await refreshGoals();
+      if (currentView === 'budgets') await refreshBudgets();
+      if (currentView === 'trips') await refreshTrips();
       screen.render();
     } catch (e) {
       createMessage({ screen, title: 'Error', message: e?.message || String(e) });
@@ -696,21 +906,48 @@ async function main() {
     return id;
   }
 
+  function selectRowById(table, id) {
+    const list = table?.list ?? table;
+    const data = list?._rowData;
+    if (!Array.isArray(data) || !data.length) return;
+    const idx = data.findIndex(r => Number(r?.[0]) === Number(id));
+    if (idx >= 0) list.select(idx);
+  }
+
+  function centsToAmountInput(cents) {
+    const n = Number(cents ?? 0);
+    if (!Number.isFinite(n)) return '';
+    return (n / 100).toFixed(2);
+  }
+
   // Navigation
   screen.key(['d'], () => showView('dashboard'));
   screen.key(['t'], () => showView('tx'));
   screen.key(['r'], () => showView('recurring'));
   screen.key(['g'], () => showView('goals'));
+  screen.key(['b'], () => showView('budgets'));
+  screen.key(['m'], () => showView('trips'));
+
+  const viewOrder = ['dashboard', 'tx', 'recurring', 'goals', 'budgets', 'trips'];
+  screen.key(['tab'], () => {
+    const idx = viewOrder.indexOf(currentView);
+    showView(viewOrder[(idx + 1) % viewOrder.length]);
+  });
+  screen.key(['S-tab'], () => {
+    const idx = viewOrder.indexOf(currentView);
+    showView(viewOrder[(idx - 1 + viewOrder.length) % viewOrder.length]);
+  });
 
   screen.key(['h', '?'], () => {
     createMessage({
       screen,
       title: 'Help',
       message:
-        'Navigation: d dashboard, t transactions, r recurring, g goals\n' +
-        'Actions: a add, del delete/toggle, p post recurring\n' +
-        'Transactions: / filter\n' +
-        'Quit: q or Ctrl+C'
+        'Navigation: d t r g b m (or Tab / Shift+Tab to cycle)\n' +
+        'Actions: a add, enter edit, del delete/toggle, p post recurring\n' +
+        'Filter: / search (all list views), date range (tx)\n' +
+        'Export: e export current view to CSV\n' +
+        'Quit: q (confirm) or Ctrl+C (immediate)'
     });
   });
 
@@ -771,12 +1008,88 @@ async function main() {
     createFormPrompt({
       screen,
       title: 'Filter Transactions',
-      fields: [{ name: 'filter', label: 'contains', initial: txFilter }],
+      fields: [
+        { name: 'filter', label: 'contains', initial: txFilter },
+        { name: 'from', label: 'from (YYYY-MM-DD)', initial: txDateFrom },
+        { name: 'to', label: 'to (YYYY-MM-DD)', initial: txDateTo }
+      ],
       onSubmit: async (v) => {
         txFilter = String(v.filter || '').trim();
+        txDateFrom = String(v.from || '').trim();
+        txDateTo = String(v.to || '').trim();
         await refreshTx();
       }
     });
+  });
+
+  view.tx.list.key(['enter'], () => {
+    const id = selectedIdFromTable(view.tx);
+    if (!id) return;
+
+    (async () => {
+      try {
+        const tx = await db.get(`SELECT * FROM transactions WHERE id = ?`, [id]);
+        if (!tx) return;
+
+        const typeOptions = ['expense', 'income'];
+        const initialTypeIndex = Math.max(0, typeOptions.indexOf(tx.type));
+
+        createSelectPrompt({
+          screen,
+          title: `Edit Transaction #${id} (type)`,
+          options: typeOptions,
+          initialIndex: initialTypeIndex,
+          onSelect: async (type) => {
+            try {
+              const categories = await getCategories(db, type);
+              if (!categories.length) throw new Error(`No categories for ${type}`);
+              const initialCategoryIndex = Math.max(0, categories.indexOf(tx.category));
+
+              createSelectPrompt({
+                screen,
+                title: `Edit Transaction #${id} (category)`,
+                options: categories,
+                initialIndex: initialCategoryIndex,
+                onSelect: (category) => {
+                  createFormPrompt({
+                    screen,
+                    title: `Edit Transaction #${id} (${type} / ${category})`,
+                    fields: [
+                      { name: 'amount', label: 'amount', initial: centsToAmountInput(tx.amount_cents) },
+                      { name: 'note', label: 'note', initial: tx.note || '' },
+                      { name: 'date', label: 'date (YYYY-MM-DD)', initial: tx.date || isoDateOnly(new Date()) }
+                    ],
+                    onSubmit: async (v) => {
+                      try {
+                        const amountCents = parseAmountToCents(v.amount);
+                        if (amountCents === null) throw new Error('invalid amount');
+
+                        const note = String(v.note || '').trim() || null;
+                        const date = String(v.date || '').trim() || isoDateOnly(new Date());
+
+                        await db.run(
+                          `UPDATE transactions SET type=?, amount_cents=?, category=?, note=?, date=? WHERE id=?`,
+                          [type, amountCents, category, note, date, id]
+                        );
+                        await refreshTx();
+                        selectRowById(view.tx, id);
+                        screen.render();
+                      } catch (e) {
+                        createMessage({ screen, title: 'Invalid', message: e?.message || String(e) });
+                      }
+                    }
+                  });
+                }
+              });
+            } catch (e) {
+              createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+            }
+          }
+        });
+      } catch (e) {
+        createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+      }
+    })();
   });
 
   view.tx.list.key(['delete', 'backspace'], () => {
@@ -911,6 +1224,101 @@ async function main() {
     });
   });
 
+  view.recurring.list.key(['enter'], () => {
+    const id = selectedIdFromTable(view.recurring);
+    if (!id) return;
+
+    (async () => {
+      try {
+        const item = await db.get(`SELECT * FROM recurring WHERE id = ?`, [id]);
+        if (!item) return;
+
+        const typeOptions = ['expense', 'income'];
+        const initialTypeIndex = Math.max(0, typeOptions.indexOf(item.type));
+
+        createSelectPrompt({
+          screen,
+          title: `Edit Recurring #${id} (type)`,
+          options: typeOptions,
+          initialIndex: initialTypeIndex,
+          onSelect: async (type) => {
+            try {
+              const categories = await getCategories(db, type);
+              if (!categories.length) throw new Error(`No categories for ${type}`);
+              const initialCategoryIndex = Math.max(0, categories.indexOf(item.category));
+
+              createSelectPrompt({
+                screen,
+                title: `Edit Recurring #${id} (category)`,
+                options: categories,
+                initialIndex: initialCategoryIndex,
+                onSelect: (category) => {
+                  createFormPrompt({
+                    screen,
+                    title: `Edit Recurring #${id} (${type} / ${category})`,
+                    fields: [
+                      { name: 'name', label: 'name', initial: item.name || '' },
+                      { name: 'amount', label: 'amount', initial: centsToAmountInput(item.amount_cents) },
+                      { name: 'cadence', label: 'cadence (weekly|monthly)', initial: item.cadence || 'monthly' },
+                      { name: 'day_of_week', label: 'day_of_week (0-6)', initial: item.day_of_week != null ? String(item.day_of_week) : '' },
+                      { name: 'day_of_month', label: 'day_of_month (1-31)', initial: item.day_of_month != null ? String(item.day_of_month) : '1' },
+                      { name: 'next_due_date', label: 'next_due_date (YYYY-MM-DD)', initial: item.next_due_date || isoDateOnly(new Date()) }
+                    ],
+                    onSubmit: async (v) => {
+                      try {
+                        const name = String(v.name || '').trim();
+                        if (!name) throw new Error('missing name');
+
+                        const amountCents = parseAmountToCents(v.amount);
+                        if (amountCents === null) throw new Error('invalid amount');
+
+                        const cadence = String(v.cadence || '').trim();
+                        if (!['weekly', 'monthly'].includes(cadence)) throw new Error('cadence must be weekly|monthly');
+
+                        const nextDue = String(v.next_due_date || '').trim() || isoDateOnly(new Date());
+
+                        const dowRaw = String(v.day_of_week ?? '').trim();
+                        const domRaw = String(v.day_of_month ?? '').trim();
+
+                        const dow = dowRaw === '' ? null : Number(dowRaw);
+                        const dom = domRaw === '' ? null : Number(domRaw);
+
+                        if (cadence === 'weekly') {
+                          if (!(Number.isInteger(dow) && dow >= 0 && dow <= 6)) {
+                            throw new Error('weekly requires day_of_week 0-6');
+                          }
+                        }
+                        if (cadence === 'monthly') {
+                          if (!(Number.isInteger(dom) && dom >= 1 && dom <= 31)) {
+                            throw new Error('monthly requires day_of_month 1-31');
+                          }
+                        }
+
+                        await db.run(
+                          `UPDATE recurring SET name=?, type=?, amount_cents=?, category=?, cadence=?, day_of_week=?, day_of_month=?, next_due_date=? WHERE id=?`,
+                          [name, type, amountCents, category, cadence, dow, dom, nextDue, id]
+                        );
+                        await refreshRecurring();
+                        selectRowById(view.recurring, id);
+                        screen.render();
+                      } catch (e) {
+                        createMessage({ screen, title: 'Invalid', message: e?.message || String(e) });
+                      }
+                    }
+                  });
+                }
+              });
+            } catch (e) {
+              createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+            }
+          }
+        });
+      } catch (e) {
+        createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+      }
+    })();
+  });
+
   view.recurring.list.key(['delete', 'backspace'], () => {
     const id = selectedIdFromTable(view.recurring);
     if (!id) return;
@@ -928,6 +1336,18 @@ async function main() {
         } catch (e) {
           createMessage({ screen, title: 'Error', message: e?.message || String(e) });
         }
+      }
+    });
+  });
+
+  view.recurring.list.key(['/'], () => {
+    createFormPrompt({
+      screen,
+      title: 'Filter Recurring',
+      fields: [{ name: 'filter', label: 'contains', initial: recurringFilter }],
+      onSubmit: async (v) => {
+        recurringFilter = String(v.filter || '').trim();
+        await refreshRecurring();
       }
     });
   });
@@ -992,10 +1412,446 @@ async function main() {
     });
   });
 
+  view.goals.list.key(['/'], () => {
+    createFormPrompt({
+      screen,
+      title: 'Filter Goals',
+      fields: [{ name: 'filter', label: 'contains', initial: goalsFilter }],
+      onSubmit: async (v) => {
+        goalsFilter = String(v.filter || '').trim();
+        await refreshGoals();
+      }
+    });
+  });
+
+  view.goals.list.key(['delete', 'backspace'], () => {
+    const id = selectedIdFromTable(view.goals);
+    if (!id) return;
+    createConfirm({
+      screen,
+      title: 'Delete Goal',
+      message: `Delete goal #${id}?`,
+      onYes: async () => {
+        try {
+          await db.run(`DELETE FROM goals WHERE id = ?`, [id]);
+          await refreshGoals();
+        } catch (e) {
+          createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+        }
+      }
+    });
+  });
+
+  // Budget actions
+  view.budgets.list.key(['a'], () => {
+    createSelectPrompt({
+      screen,
+      title: 'Budget Type',
+      options: ['expense', 'income'],
+      initialIndex: 0,
+      onSelect: async (type) => {
+        try {
+          const categories = await getCategories(db, type);
+          if (!categories.length) throw new Error(`No categories for ${type}`);
+
+          createSelectPrompt({
+            screen,
+            title: `Budget Category (${type})`,
+            options: categories,
+            initialIndex: 0,
+            onSelect: (category) => {
+              createFormPrompt({
+                screen,
+                title: `Set Budget (${type} / ${category})`,
+                fields: [
+                  { name: 'limit', label: 'monthly limit', initial: '' }
+                ],
+                onSubmit: async (v) => {
+                  try {
+                    const limitCents = parseAmountToCents(v.limit);
+                    if (limitCents === null) throw new Error('invalid amount');
+
+                    await db.run(
+                      `INSERT OR REPLACE INTO budgets (type, category, monthly_limit_cents) VALUES (?, ?, ?)`,
+                      [type, category, limitCents]
+                    );
+                    await refreshBudgets();
+                  } catch (e) {
+                    createMessage({ screen, title: 'Invalid', message: e?.message || String(e) });
+                  }
+                }
+              });
+            }
+          });
+        } catch (e) {
+          createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+        }
+      }
+    });
+  });
+
+  view.budgets.list.key(['enter'], () => {
+    const id = selectedIdFromTable(view.budgets);
+    if (!id) return;
+
+    (async () => {
+      try {
+        const budget = await db.get(`SELECT * FROM budgets WHERE id = ?`, [id]);
+        if (!budget) return;
+
+        createFormPrompt({
+          screen,
+          title: `Edit Budget #${id} (${budget.type} / ${budget.category})`,
+          fields: [
+            { name: 'limit', label: 'monthly limit', initial: centsToAmountInput(budget.monthly_limit_cents) }
+          ],
+          onSubmit: async (v) => {
+            try {
+              const limitCents = parseAmountToCents(v.limit);
+              if (limitCents === null) throw new Error('invalid amount');
+
+              await db.run(
+                `UPDATE budgets SET monthly_limit_cents=? WHERE id=?`,
+                [limitCents, id]
+              );
+              await refreshBudgets();
+              selectRowById(view.budgets, id);
+              screen.render();
+            } catch (e) {
+              createMessage({ screen, title: 'Invalid', message: e?.message || String(e) });
+            }
+          }
+        });
+      } catch (e) {
+        createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+      }
+    })();
+  });
+
+  view.budgets.list.key(['delete', 'backspace'], () => {
+    const id = selectedIdFromTable(view.budgets);
+    if (!id) return;
+    createConfirm({
+      screen,
+      title: 'Delete Budget',
+      message: `Delete budget #${id}?`,
+      onYes: async () => {
+        try {
+          await db.run(`DELETE FROM budgets WHERE id = ?`, [id]);
+          await refreshBudgets();
+        } catch (e) {
+          createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+        }
+      }
+    });
+  });
+
+  // Trips actions
+  view.trips.list.key(['a'], () => {
+    (async () => {
+      const vs = await getVehicleSettings(db);
+      const lastTrip = await db.get(`SELECT odometer_end FROM trips ORDER BY date DESC, id DESC LIMIT 1`);
+      const lastOdo = lastTrip?.odometer_end != null ? String(lastTrip.odometer_end) : '';
+
+      createFormPrompt({
+        screen,
+        title: `Log Trip  (${vs.mpg} MPG, gas ${formatCents(vs.gas_price_cents)}/gal)`,
+        fields: [
+          { name: 'destination', label: 'destination', initial: '' },
+          { name: 'date', label: 'date (YYYY-MM-DD)', initial: isoDateOnly(new Date()) },
+          { name: 'odo_start', label: 'odometer start', initial: lastOdo },
+          { name: 'odo_end', label: 'odometer end', initial: '' },
+          { name: 'gas_cost', label: 'gas cost (blank=auto)', initial: '' },
+          { name: 'other_cost', label: 'other costs', initial: '0' },
+          { name: 'income', label: 'income earned', initial: '' },
+          { name: 'note', label: 'note', initial: '' }
+        ],
+        onSubmit: async (v) => {
+          try {
+            const destination = String(v.destination || '').trim();
+            if (!destination) throw new Error('missing destination');
+
+            const date = String(v.date || '').trim() || isoDateOnly(new Date());
+
+            const odoStart = Number(String(v.odo_start || '').trim());
+            const odoEnd = Number(String(v.odo_end || '').trim());
+            if (!Number.isFinite(odoStart) || !Number.isFinite(odoEnd)) throw new Error('invalid odometer reading');
+            if (odoEnd < odoStart) throw new Error('odometer end must be >= start');
+            const miles = odoEnd - odoStart;
+
+            let gasCents;
+            let gasEstimated;
+            const gasRaw = String(v.gas_cost || '').trim();
+            if (gasRaw === '') {
+              gasCents = estimateGasCost(miles, vs.mpg, vs.gas_price_cents);
+              gasEstimated = 1;
+            } else {
+              gasCents = parseAmountToCents(gasRaw);
+              if (gasCents === null) throw new Error('invalid gas cost');
+              gasEstimated = 0;
+            }
+
+            const otherCents = parseAmountToCents(v.other_cost) ?? 0;
+            const incomeCents = parseAmountToCents(v.income);
+            if (incomeCents === null) throw new Error('invalid income');
+
+            const note = String(v.note || '').trim() || null;
+
+            await db.run(
+              `INSERT INTO trips (destination, date, odometer_start, odometer_end, miles, gas_cost_cents, gas_estimated, other_cost_cents, income_cents, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [destination, date, odoStart, odoEnd, miles, gasCents, gasEstimated, otherCents, incomeCents, note]
+            );
+            await refreshTrips();
+          } catch (e) {
+            createMessage({ screen, title: 'Invalid', message: e?.message || String(e) });
+          }
+        }
+      });
+    })();
+  });
+
+  view.trips.list.key(['enter'], () => {
+    const id = selectedIdFromTable(view.trips);
+    if (!id) return;
+
+    (async () => {
+      try {
+        const trip = await db.get(`SELECT * FROM trips WHERE id = ?`, [id]);
+        if (!trip) return;
+
+        const vs = await getVehicleSettings(db);
+        const gasInitial = trip.gas_estimated ? '' : centsToAmountInput(trip.gas_cost_cents);
+
+        createFormPrompt({
+          screen,
+          title: `Edit Trip #${id}  (${vs.mpg} MPG, gas ${formatCents(vs.gas_price_cents)}/gal)`,
+          fields: [
+            { name: 'destination', label: 'destination', initial: trip.destination },
+            { name: 'date', label: 'date (YYYY-MM-DD)', initial: trip.date },
+            { name: 'odo_start', label: 'odometer start', initial: trip.odometer_start != null ? String(trip.odometer_start) : '' },
+            { name: 'odo_end', label: 'odometer end', initial: trip.odometer_end != null ? String(trip.odometer_end) : '' },
+            { name: 'gas_cost', label: 'gas cost (blank=auto)', initial: gasInitial },
+            { name: 'other_cost', label: 'other costs', initial: centsToAmountInput(trip.other_cost_cents) },
+            { name: 'income', label: 'income earned', initial: centsToAmountInput(trip.income_cents) },
+            { name: 'note', label: 'note', initial: trip.note || '' }
+          ],
+          onSubmit: async (v) => {
+            try {
+              const destination = String(v.destination || '').trim();
+              if (!destination) throw new Error('missing destination');
+
+              const date = String(v.date || '').trim() || isoDateOnly(new Date());
+
+              const odoStart = Number(String(v.odo_start || '').trim());
+              const odoEnd = Number(String(v.odo_end || '').trim());
+              if (!Number.isFinite(odoStart) || !Number.isFinite(odoEnd)) throw new Error('invalid odometer reading');
+              if (odoEnd < odoStart) throw new Error('odometer end must be >= start');
+              const miles = odoEnd - odoStart;
+
+              let gasCents;
+              let gasEstimated;
+              const gasRaw = String(v.gas_cost || '').trim();
+              if (gasRaw === '') {
+                gasCents = estimateGasCost(miles, vs.mpg, vs.gas_price_cents);
+                gasEstimated = 1;
+              } else {
+                gasCents = parseAmountToCents(gasRaw);
+                if (gasCents === null) throw new Error('invalid gas cost');
+                gasEstimated = 0;
+              }
+
+              const otherCents = parseAmountToCents(v.other_cost) ?? 0;
+              const incomeCents = parseAmountToCents(v.income);
+              if (incomeCents === null) throw new Error('invalid income');
+
+              const note = String(v.note || '').trim() || null;
+
+              await db.run(
+                `UPDATE trips SET destination=?, date=?, odometer_start=?, odometer_end=?, miles=?, gas_cost_cents=?, gas_estimated=?, other_cost_cents=?, income_cents=?, note=? WHERE id=?`,
+                [destination, date, odoStart, odoEnd, miles, gasCents, gasEstimated, otherCents, incomeCents, note, id]
+              );
+              await refreshTrips();
+              selectRowById(view.trips, id);
+              screen.render();
+            } catch (e) {
+              createMessage({ screen, title: 'Invalid', message: e?.message || String(e) });
+            }
+          }
+        });
+      } catch (e) {
+        createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+      }
+    })();
+  });
+
+  view.trips.list.key(['delete', 'backspace'], () => {
+    const id = selectedIdFromTable(view.trips);
+    if (!id) return;
+    createConfirm({
+      screen,
+      title: 'Delete Trip',
+      message: `Delete trip #${id}?`,
+      onYes: async () => {
+        try {
+          await db.run(`DELETE FROM trips WHERE id = ?`, [id]);
+          await refreshTrips();
+        } catch (e) {
+          createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+        }
+      }
+    });
+  });
+
+  view.trips.list.key(['v'], () => {
+    (async () => {
+      try {
+        const vs = await getVehicleSettings(db);
+        createFormPrompt({
+          screen,
+          title: 'Vehicle Settings',
+          fields: [
+            { name: 'mpg', label: 'MPG (miles/gallon)', initial: String(vs.mpg) },
+            { name: 'gas_price', label: 'gas price $/gallon', initial: centsToAmountInput(vs.gas_price_cents) }
+          ],
+          onSubmit: async (v) => {
+            try {
+              const mpg = Number(String(v.mpg || '').trim());
+              if (!Number.isFinite(mpg) || mpg <= 0) throw new Error('invalid MPG');
+
+              const priceCents = parseAmountToCents(v.gas_price);
+              if (priceCents === null || priceCents <= 0) throw new Error('invalid gas price');
+
+              await db.run(
+                `UPDATE vehicle_settings SET mpg=?, gas_price_cents=? WHERE id=1`,
+                [mpg, priceCents]
+              );
+              await refreshTrips();
+              createMessage({ screen, title: 'Saved', message: `Vehicle: ${mpg} MPG, gas ${formatCents(priceCents)}/gal` });
+            } catch (e) {
+              createMessage({ screen, title: 'Invalid', message: e?.message || String(e) });
+            }
+          }
+        });
+      } catch (e) {
+        createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+      }
+    })();
+  });
+
+  view.trips.list.key(['/'], () => {
+    createFormPrompt({
+      screen,
+      title: 'Filter Trips',
+      fields: [{ name: 'filter', label: 'contains', initial: tripsFilter }],
+      onSubmit: async (v) => {
+        tripsFilter = String(v.filter || '').trim();
+        await refreshTrips();
+      }
+    });
+  });
+
+  // CSV Export
+  screen.key(['e'], () => {
+    if (currentView === 'dashboard') {
+      createMessage({ screen, title: 'Export', message: 'Export is available from list views (t, r, g, b, m).' });
+      return;
+    }
+
+    (async () => {
+      try {
+        let columns, rows, filename;
+
+        if (currentView === 'tx') {
+          let query = `SELECT * FROM transactions`;
+          const params = [];
+          const clauses = [];
+          if (txDateFrom) { clauses.push(`date >= ?`); params.push(txDateFrom); }
+          if (txDateTo) { clauses.push(`date <= ?`); params.push(txDateTo); }
+          if (clauses.length) query += ` WHERE ` + clauses.join(' AND ');
+          query += ` ORDER BY date DESC, id DESC LIMIT 500`;
+          const data = await db.all(query, params);
+          const filtered = data.filter(matchesFilter);
+          columns = ['ID', 'Date', 'Type', 'Amount', 'Category', 'Note'];
+          rows = filtered.map(t => [t.id, t.date, t.type, formatCents(t.amount_cents), t.category, t.note || '']);
+          filename = 'transactions.csv';
+        } else if (currentView === 'recurring') {
+          const data = await db.all(`SELECT * FROM recurring ORDER BY active DESC, next_due_date ASC`);
+          columns = ['ID', 'Active', 'Next Due', 'Name', 'Type', 'Amount', 'Category', 'Cadence'];
+          rows = data.map(r => [r.id, r.active ? 'yes' : 'no', r.next_due_date, r.name, r.type, formatCents(r.amount_cents), r.category, r.cadence]);
+          filename = 'recurring.csv';
+        } else if (currentView === 'goals') {
+          const data = await db.all(`SELECT * FROM goals ORDER BY created_at DESC`);
+          columns = ['ID', 'Name', 'Current', 'Target', '%', 'Due'];
+          rows = data.map(g => {
+            const pct = g.target_cents ? Math.round((g.current_cents / g.target_cents) * 100) : 0;
+            return [g.id, g.name, formatCents(g.current_cents), formatCents(g.target_cents), `${pct}%`, g.due_date || ''];
+          });
+          filename = 'goals.csv';
+        } else if (currentView === 'budgets') {
+          const today = isoDateOnly(new Date());
+          const { start, end } = monthRange(today);
+          const budgets = await db.all(`SELECT * FROM budgets ORDER BY type ASC, category ASC`);
+          const spending = await getMonthlySpendByCategory(db, start, end);
+          const spendMap = {};
+          for (const s of spending) spendMap[s.category] = s.spent_cents;
+          columns = ['ID', 'Type', 'Category', 'Limit', 'Spent', 'Remaining', 'Status'];
+          rows = budgets.map(b => {
+            const spent = spendMap[b.category] || 0;
+            const remaining = b.monthly_limit_cents - spent;
+            const pct = b.monthly_limit_cents ? Math.round((spent / b.monthly_limit_cents) * 100) : 0;
+            let status = 'OK';
+            if (pct >= 100) status = 'OVER';
+            else if (pct >= 80) status = 'WARN';
+            return [b.id, b.type, b.category, formatCents(b.monthly_limit_cents), formatCents(spent), formatCents(remaining), `${status} (${pct}%)`];
+          });
+          filename = 'budgets.csv';
+        } else if (currentView === 'trips') {
+          const data = await db.all(`SELECT * FROM trips ORDER BY date DESC, id DESC`);
+          columns = ['ID', 'Date', 'Destination', 'Miles', 'Gas', 'Other Costs', 'Income', 'Net', 'Note'];
+          rows = data.map(t => {
+            const net = t.income_cents - t.gas_cost_cents - t.other_cost_cents;
+            return [t.id, t.date, t.destination, t.miles, formatCents(t.gas_cost_cents), formatCents(t.other_cost_cents), formatCents(t.income_cents), formatCents(net), t.note || ''];
+          });
+          filename = 'trips.csv';
+        } else {
+          return;
+        }
+
+        const csv = exportToCsv(columns, rows);
+        const outPath = path.join(__dirname, filename);
+        fs.writeFileSync(outPath, csv, 'utf8');
+        createMessage({ screen, title: 'Exported', message: `${rows.length} rows written to ${outPath}` });
+      } catch (e) {
+        createMessage({ screen, title: 'Export Error', message: e?.message || String(e) });
+      }
+    })();
+  });
+
+  // Auto-post overdue recurring on startup
+  let autoPostCount = 0;
+  let autoPostError = null;
+  try {
+    const today = isoDateOnly(new Date());
+    autoPostCount = await autoPostOverdueRecurring(db, today);
+  } catch (e) {
+    autoPostError = e?.message || String(e);
+  }
+
   // Initial view
   showView('dashboard');
   await refreshDashboard();
   screen.render();
+
+  // Show auto-post notification after initial render so focus isn't stolen
+  if (autoPostError) {
+    createMessage({ screen, title: 'Auto-Post Error', message: autoPostError });
+  } else if (autoPostCount > 0) {
+    createMessage({
+      screen,
+      title: 'Auto-Posted Recurring',
+      message: `${autoPostCount} overdue recurring item(s) were automatically posted as transactions.`
+    });
+  }
 }
 
 try {

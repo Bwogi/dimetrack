@@ -67,7 +67,56 @@ export async function initDb() {
       note TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS budgets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL CHECK (type IN ('income','expense')),
+      category TEXT NOT NULL,
+      monthly_limit_cents INTEGER NOT NULL CHECK (monthly_limit_cents >= 0),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(type, category)
+    );
+
+    CREATE TABLE IF NOT EXISTS trips (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      destination TEXT NOT NULL,
+      date TEXT NOT NULL,
+      odometer_start REAL,
+      odometer_end REAL,
+      miles REAL NOT NULL DEFAULT 0 CHECK (miles >= 0),
+      gas_cost_cents INTEGER NOT NULL DEFAULT 0 CHECK (gas_cost_cents >= 0),
+      gas_estimated INTEGER NOT NULL DEFAULT 1,
+      other_cost_cents INTEGER NOT NULL DEFAULT 0 CHECK (other_cost_cents >= 0),
+      income_cents INTEGER NOT NULL DEFAULT 0 CHECK (income_cents >= 0),
+      note TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trips_date ON trips(date);
+
+    CREATE TABLE IF NOT EXISTS vehicle_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      mpg REAL NOT NULL DEFAULT 25.0,
+      gas_price_cents INTEGER NOT NULL DEFAULT 350
+    );
+
+    INSERT OR IGNORE INTO vehicle_settings (id, mpg, gas_price_cents) VALUES (1, 25.0, 350);
   `);
+
+  // Migrate: add odometer columns to existing trips table if missing
+  try {
+    const cols = await db.all(`PRAGMA table_info(trips)`);
+    const colNames = cols.map(c => c.name);
+    if (!colNames.includes('odometer_start')) {
+      await db.exec(`ALTER TABLE trips ADD COLUMN odometer_start REAL`);
+    }
+    if (!colNames.includes('odometer_end')) {
+      await db.exec(`ALTER TABLE trips ADD COLUMN odometer_end REAL`);
+    }
+    if (!colNames.includes('gas_estimated')) {
+      await db.exec(`ALTER TABLE trips ADD COLUMN gas_estimated INTEGER NOT NULL DEFAULT 1`);
+    }
+  } catch (_) { /* columns already exist */ }
 
   const row = await db.get(`SELECT COUNT(1) AS cnt FROM categories`);
   if ((row?.cnt ?? 0) === 0) {
@@ -125,6 +174,83 @@ export function addDays(dateStr, days) {
   const d = new Date(`${dateStr}T00:00:00`);
   d.setDate(d.getDate() + days);
   return isoDateOnly(d);
+}
+
+export async function autoPostOverdueRecurring(db, todayIso) {
+  const overdueItems = await db.all(
+    `SELECT * FROM recurring WHERE active=1 AND next_due_date <= ?`,
+    [todayIso]
+  );
+  let posted = 0;
+  for (const item of overdueItems) {
+    await db.run(
+      `INSERT INTO transactions (type, amount_cents, category, note, date) VALUES (?, ?, ?, ?, ?)`,
+      [item.type, item.amount_cents, item.category, `Recurring: ${item.name}`, item.next_due_date]
+    );
+    let nextDue;
+    if (item.cadence === 'weekly') {
+      nextDue = addDays(item.next_due_date, 7);
+    } else {
+      nextDue = addMonths(item.next_due_date, 1, item.day_of_month);
+    }
+    await db.run(`UPDATE recurring SET next_due_date=? WHERE id=?`, [nextDue, item.id]);
+    posted++;
+  }
+  return posted;
+}
+
+export function exportToCsv(columns, rows) {
+  const escape = (s) => {
+    const str = String(s ?? '');
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
+  };
+  const header = columns.map(escape).join(',');
+  const body = rows.map(row => row.map(escape).join(',')).join('\n');
+  return header + '\n' + body;
+}
+
+export async function getMonthlySpendByCategory(db, start, end) {
+  const rows = await db.all(
+    `SELECT category, COALESCE(SUM(amount_cents),0) as spent_cents
+     FROM transactions WHERE type='expense' AND date BETWEEN ? AND ?
+     GROUP BY category ORDER BY spent_cents DESC`,
+    [start, end]
+  );
+  return rows;
+}
+
+export const IRS_MILEAGE_RATE_CENTS = 70; // 2025 IRS standard mileage rate: $0.70/mile
+
+export async function getVehicleSettings(db) {
+  return db.get(`SELECT * FROM vehicle_settings WHERE id = 1`);
+}
+
+export function estimateGasCost(miles, mpg, gasPriceCents) {
+  if (!miles || !mpg || !gasPriceCents) return 0;
+  const gallons = miles / mpg;
+  return Math.round(gallons * gasPriceCents);
+}
+
+export async function getMonthlyTripSummary(db, start, end) {
+  const row = await db.get(
+    `SELECT
+       COUNT(1) AS trip_count,
+       COALESCE(SUM(miles), 0) AS total_miles,
+       COALESCE(SUM(gas_cost_cents), 0) AS total_gas_cents,
+       COALESCE(SUM(other_cost_cents), 0) AS total_other_cents,
+       COALESCE(SUM(income_cents), 0) AS total_income_cents
+     FROM trips WHERE date BETWEEN ? AND ?`,
+    [start, end]
+  );
+  const totalCost = row.total_gas_cents + row.total_other_cents;
+  const netProfit = row.total_income_cents - totalCost;
+  const costPerMile = row.total_miles > 0 ? Math.round(totalCost / row.total_miles) : 0;
+  const profitPerMile = row.total_miles > 0 ? Math.round(netProfit / row.total_miles) : 0;
+  const irsDeduction = Math.round(row.total_miles * IRS_MILEAGE_RATE_CENTS);
+  return { ...row, totalCost, netProfit, costPerMile, profitPerMile, irsDeduction };
 }
 
 export function addMonths(dateStr, months, dayOfMonth) {

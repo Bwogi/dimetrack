@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a0a0a"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+  <!-- Dollar sign -->
+  <text x="512" y="620" text-anchor="middle" font-family="Menlo, monospace" font-size="520" font-weight="bold" fill="#00ff66">$</text>
+  <!-- Terminal cursor blink -->
+  <rect x="680" y="340" width="40" height="280" rx="6" fill="#00ff66" opacity="0.7"/>
+  <!-- Subtle grid lines -->
+  <line x1="180" y1="780" x2="844" y2="780" stroke="#00ff66" stroke-width="3" opacity="0.3"/>
+  <line x1="180" y1="830" x2="844" y2="830" stroke="#00ff66" stroke-width="2" opacity="0.15"/>
+  <!-- Mini bar chart -->
+  <rect x="220" y="700" width="60" height="80" rx="4" fill="#00ff66" opacity="0.4"/>
+  <rect x="310" y="660" width="60" height="120" rx="4" fill="#00ff66" opacity="0.5"/>
+  <rect x="400" y="630" width="60" height="150" rx="4" fill="#00ff66" opacity="0.6"/>
+</svg>

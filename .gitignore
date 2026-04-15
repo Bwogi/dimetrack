@@ -39,3 +39,9 @@ build/
 
 # misc
 *.swp
+
+# exported reports
+*.csv
+
+# macOS app bundle
+DimeTrack.app/

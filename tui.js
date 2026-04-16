@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import {
   addDays,
   addMonths,
+  autoGenerateAllocations,
   autoPostOverdueRecurring,
   computeAllocations,
   estimateGasCost,
@@ -622,7 +623,7 @@ async function main() {
     goals:     'a:add  enter:edit(+$)  del:delete  /:search  e:export  Tab:cycle  q:quit',
     budgets:   'a:add  enter:edit  del:delete  /:search  e:export  Tab:cycle  q:quit',
     trips:     'a:add  enter:edit  del:delete  v:vehicle  /:search  e:export  Tab:cycle  q:quit',
-    allocations:'a:add  enter:edit  del:toggle  ↑↓:priority  e:export  Tab:cycle  q:quit'
+    allocations:'a:add  A:auto-sync  enter:edit  del:toggle  e:export  Tab:cycle  q:quit'
   };
 
   function updateChrome() {
@@ -1223,6 +1224,16 @@ async function main() {
       })
     });
     if (!items.length) {
+      // Auto-generate allocations from recurring, budgets, and spending history
+      const count = await autoGenerateAllocations(db);
+      if (count > 0) {
+        createMessage({
+          screen,
+          title: 'Auto-Allocated',
+          message: `Created ${count} allocation(s) from your recurring bills, budgets, and spending history.\nEdit priorities and amounts with Enter, or re-sync with Shift+A.`
+        });
+        return refreshAllocations(); // re-run with new data
+      }
       view.allocations.list.setItems(['  (no allocations — press "a" to add one)']);
     }
 
@@ -1338,7 +1349,7 @@ async function main() {
         '  Goals         Progress bars, saved/target, overall completion %\n' +
         '  Budgets       Usage bars, OVER/WARN/OK badges, overall spending summary\n' +
         '  Trips         Profitability, cost/mi, IRS deduction @ $0.70/mi\n' +
-        '  Allocate      Envelope-style income allocation, priority funding, status\n' +
+        '  Allocate      Auto-generated envelopes from bills, budgets & spending  A:re-sync\n' +
         '\n' +
         '{bold}◆ Quit{/bold}\n' +
         '  q  Confirm quit     Ctrl+C  Immediate exit'
@@ -2267,6 +2278,35 @@ async function main() {
         createMessage({ screen, title: 'Error', message: e?.message || String(e) });
       }
     })();
+  });
+
+  view.allocations.list.key(['S-a'], () => {
+    createConfirm({
+      screen,
+      title: 'Re-sync Allocations',
+      message: 'Scan recurring bills, budgets, and spending history to add missing allocations?\n(Existing allocations are kept unchanged.)',
+      onConfirm: async () => {
+        try {
+          const count = await autoGenerateAllocations(db);
+          if (count > 0) {
+            createMessage({
+              screen,
+              title: 'Auto-Allocated',
+              message: `Added ${count} new allocation(s) from your data.`
+            });
+          } else {
+            createMessage({
+              screen,
+              title: 'Up to Date',
+              message: 'All recurring bills and budget categories are already allocated.'
+            });
+          }
+          await refreshAllocations();
+        } catch (e) {
+          createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+        }
+      }
+    });
   });
 
   // CSV Export

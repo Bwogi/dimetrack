@@ -309,6 +309,83 @@ export async function computeAllocations(db, start, end) {
   return { totalIncome, allocated: totalIncome - remaining, unallocated: remaining, items: results };
 }
 
+export async function autoGenerateAllocations(db) {
+  const existing = await db.all(`SELECT name FROM allocations`);
+  const existingNames = new Set(existing.map(a => a.name.toLowerCase()));
+
+  let priority = 10;
+  let added = 0;
+
+  // 1. From active recurring expenses (known fixed bills)
+  const recurring = await db.all(
+    `SELECT name, amount_cents, cadence FROM recurring WHERE active=1 AND type='expense' ORDER BY amount_cents DESC`
+  );
+  for (const r of recurring) {
+    const allocName = r.name;
+    if (existingNames.has(allocName.toLowerCase())) continue;
+    // Normalize to monthly amount
+    const monthlyCents = r.cadence === 'weekly' ? Math.round(r.amount_cents * 4.33) : r.amount_cents;
+    await db.run(
+      `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES (?, 'fixed', ?, 0, ?)`,
+      [allocName, monthlyCents, priority]
+    );
+    existingNames.add(allocName.toLowerCase());
+    priority += 10;
+    added++;
+  }
+
+  // 2. From budget limits (categories you've explicitly budgeted)
+  const budgets = await db.all(
+    `SELECT category, monthly_limit_cents FROM budgets WHERE type='expense' ORDER BY monthly_limit_cents DESC`
+  );
+  for (const b of budgets) {
+    const allocName = b.category;
+    if (existingNames.has(allocName.toLowerCase())) continue;
+    await db.run(
+      `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES (?, 'fixed', ?, 0, ?)`,
+      [allocName, b.monthly_limit_cents, priority]
+    );
+    existingNames.add(allocName.toLowerCase());
+    priority += 10;
+    added++;
+  }
+
+  // 3. From top spending categories (3-month average) not already covered
+  const threeMonthsAgo = new Date();
+  threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+  const since = isoDateOnly(threeMonthsAgo);
+  const today = isoDateOnly(new Date());
+  const spending = await db.all(
+    `SELECT category, COALESCE(SUM(amount_cents),0) AS total
+     FROM transactions WHERE type='expense' AND date >= ? AND date <= ?
+     GROUP BY category ORDER BY total DESC`,
+    [since, today]
+  );
+  for (const s of spending) {
+    if (existingNames.has(s.category.toLowerCase())) continue;
+    const monthlyAvg = Math.round(s.total / 3);
+    if (monthlyAvg < 100) continue; // skip < $1/mo
+    await db.run(
+      `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES (?, 'fixed', ?, 0, ?)`,
+      [s.category, monthlyAvg, priority]
+    );
+    existingNames.add(s.category.toLowerCase());
+    priority += 10;
+    added++;
+  }
+
+  // 4. Add a savings envelope for the remainder if none exists
+  if (!existingNames.has('savings')) {
+    await db.run(
+      `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES ('Savings', 'percent', 0, 20, ?)`,
+      [priority]
+    );
+    added++;
+  }
+
+  return added;
+}
+
 export function addMonths(dateStr, months, dayOfMonth) {
   const d = new Date(`${dateStr}T00:00:00`);
   const targetMonth = d.getMonth() + months;

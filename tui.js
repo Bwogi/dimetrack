@@ -623,7 +623,7 @@ async function main() {
     goals:     'a:add  enter:edit(+$)  del:delete  /:search  e:export  Tab:cycle  q:quit',
     budgets:   'a:add  enter:edit  del:delete  /:search  e:export  Tab:cycle  q:quit',
     trips:     'a:add  enter:edit  del:delete  v:vehicle  /:search  e:export  Tab:cycle  q:quit',
-    allocations:'a:add  A:auto-sync  enter:edit  del:toggle  e:export  Tab:cycle  q:quit'
+    allocations:'a:add  enter:edit  del:remove  A:auto-fill from bills  e:export  q:quit'
   };
 
   function updateChrome() {
@@ -1197,70 +1197,57 @@ async function main() {
     view.allocations.setData({
       columns: [
         { title: 'ID', minWidth: 3, maxWidth: 5, weight: 1 },
-        { title: 'Pri', minWidth: 3, maxWidth: 4, weight: 1 },
-        { title: 'Name', minWidth: 12, maxWidth: 26, weight: 3 },
-        { title: 'Rule', minWidth: 10, maxWidth: 14, weight: 2 },
-        { title: 'Needed', minWidth: 8, maxWidth: 12, weight: 1 },
-        { title: 'Funded', minWidth: 10, maxWidth: 14, weight: 2 },
-        { title: 'Status', minWidth: 8, maxWidth: 14, weight: 1 }
+        { title: 'Name', minWidth: 14, maxWidth: 30, weight: 3 },
+        { title: 'Monthly $', minWidth: 9, maxWidth: 12, weight: 1 },
+        { title: 'Got', minWidth: 12, maxWidth: 18, weight: 2 },
+        { title: '', minWidth: 8, maxWidth: 12, weight: 1 }
       ],
       rows: items.map((a) => {
-        const rule = a.alloc_type === 'fixed' ? formatCents(a.amount_cents) : `${a.percent}%`;
-        const fundedBar = progressBar(Math.min(a.pct, 100), 8);
         const dim = !a.active ? '{gray-fg}' : '';
         const dimC = !a.active ? '{/gray-fg}' : '';
-        const statusColor = a.status === 'funded' ? 'green' : a.status === 'partial' ? 'yellow' : a.status === 'unfunded' ? 'red' : 'gray';
-        const statusIcon = a.status === 'funded' ? '✓' : a.status === 'partial' ? '⚠' : a.status === 'unfunded' ? '✗' : '○';
-        const statusLabel = a.status === 'funded' ? 'FUNDED' : a.status === 'partial' ? 'PARTIAL' : a.status === 'unfunded' ? 'EMPTY' : 'OFF';
+        const color = a.status === 'funded' ? 'green' : a.status === 'partial' ? 'yellow' : a.status === 'unfunded' ? 'red' : 'gray';
+        const icon = a.status === 'funded' ? '✓ Good' : a.status === 'partial' ? '⚠ Short' : a.status === 'unfunded' ? '✗ Empty' : '○ Off';
+        const bar = progressBar(Math.min(a.pct, 100), 8);
+        const label = a.alloc_type === 'percent' ? `${a.percent}% = ${formatCents(a.needed)}` : formatCents(a.needed);
         return [
           String(a.id),
-          `{gray-fg}${a.priority}{/gray-fg}`,
           `${dim}{bold}${a.name}{/bold}${dimC}`,
-          `${dim}${a.alloc_type === 'fixed' ? 'fixed' : 'pct'}  ${rule}${dimC}`,
-          `${dim}${formatCents(a.needed)}${dimC}`,
-          `{${statusColor}-fg}${fundedBar}{/${statusColor}-fg} ${formatCents(a.funded)}`,
-          `{${statusColor}-fg}${statusIcon} ${statusLabel}{/${statusColor}-fg}`
+          `${dim}${label}${dimC}`,
+          `{${color}-fg}${bar}{/${color}-fg} ${formatCents(a.funded)}`,
+          `{${color}-fg}${icon}{/${color}-fg}`
         ];
       })
     });
     if (!items.length) {
-      // Auto-generate allocations from recurring, budgets, and spending history
       const count = await autoGenerateAllocations(db);
       if (count > 0) {
         createMessage({
           screen,
-          title: 'Auto-Allocated',
-          message: `Created ${count} allocation(s) from your recurring bills, budgets, and spending history.\nEdit priorities and amounts with Enter, or re-sync with Shift+A.`
+          title: 'Set Up!',
+          message: `Created ${count} items from your bills and spending.\nYou can edit or delete any of them.`
         });
-        return refreshAllocations(); // re-run with new data
+        return refreshAllocations();
       }
-      view.allocations.list.setItems(['  (no allocations — press "a" to add one)']);
+      view.allocations.list.setItems(['  (nothing here yet — press "a" to add one)']);
     }
 
-    const allocPct = totalIncome > 0 ? Math.round((allocated / totalIncome) * 100) : 0;
-    const allocBar = progressBar(Math.min(allocPct, 100), 20);
-    const allocColor = allocPct > 100 ? 'red' : allocPct >= 90 ? 'green' : 'yellow';
-    const fundedCount = items.filter(a => a.status === 'funded').length;
-    const partialCount = items.filter(a => a.status === 'partial').length;
-    const unfundedCount = items.filter(a => a.status === 'unfunded').length;
-    const offCount = items.filter(a => a.status === 'off').length;
+    const freeColor = unallocated >= 0 ? 'cyan' : 'red';
+    const freeLabel = unallocated >= 0 ? 'Free to spend' : 'Over-allocated by';
+    const bar = progressBar(Math.min(totalIncome > 0 ? Math.round((allocated / totalIncome) * 100) : 0, 100), 20);
+    const barColor = allocated > totalIncome ? 'red' : allocated >= totalIncome * 0.9 ? 'green' : 'yellow';
 
     if (items.length) {
       view.allocations.setSummary([
-        `  Income: {green-fg}{bold}${formatCents(totalIncome)}{/bold}{/green-fg}` +
-        `   Allocated: {${allocColor}-fg}${formatCents(allocated)}{/${allocColor}-fg} (${allocPct}%)` +
-        `   Unallocated: ${unallocated >= 0 ? `{cyan-fg}${formatCents(unallocated)}{/cyan-fg}` : `{red-fg}${formatCents(unallocated)}{/red-fg}`}` +
-        `   │  {green-fg}${fundedCount}✓{/green-fg}` +
-        (partialCount ? ` {yellow-fg}${partialCount}⚠{/yellow-fg}` : '') +
-        (unfundedCount ? ` {red-fg}${unfundedCount}✗{/red-fg}` : '') +
-        (offCount ? ` {gray-fg}${offCount}○{/gray-fg}` : ''),
-        `  ${items.length} envelopes  {${allocColor}-fg}${allocBar}{/${allocColor}-fg}  {gray-fg}(${start} .. ${end}){/gray-fg}`
+        `  You earned {green-fg}{bold}${formatCents(totalIncome)}{/bold}{/green-fg} this month` +
+        `   ·   Bills & savings: {bold}${formatCents(allocated)}{/bold}` +
+        `   ·   {${freeColor}-fg}${freeLabel}: {bold}${formatCents(Math.abs(unallocated))}{/bold}{/${freeColor}-fg}`,
+        `  {${barColor}-fg}${bar}{/${barColor}-fg}  {gray-fg}${start} to ${end}{/gray-fg}`
       ]);
     } else {
       view.allocations.setSummary([]);
     }
 
-    setStatus(`Allocations: ${items.length}  │  Income: ${formatCents(totalIncome)}  Allocated: ${formatCents(allocated)}  Free: ${formatCents(unallocated)}`);
+    setStatus(`${items.length} items  ·  Earned: ${formatCents(totalIncome)}  ·  Bills: ${formatCents(allocated)}  ·  Free: ${formatCents(unallocated)}`);
   }
 
   async function refresh() {
@@ -1349,7 +1336,7 @@ async function main() {
         '  Goals         Progress bars, saved/target, overall completion %\n' +
         '  Budgets       Usage bars, OVER/WARN/OK badges, overall spending summary\n' +
         '  Trips         Profitability, cost/mi, IRS deduction @ $0.70/mi\n' +
-        '  Allocate      Auto-generated envelopes from bills, budgets & spending  A:re-sync\n' +
+        '  Allocate      Plan where your money goes. Auto-fills from your bills.\n' +
         '\n' +
         '{bold}◆ Quit{/bold}\n' +
         '  q  Confirm quit     Ctrl+C  Immediate exit'
@@ -2157,49 +2144,25 @@ async function main() {
 
   // Allocations actions
   view.allocations.list.key(['a'], () => {
-    createSelectPrompt({
+    createFormPrompt({
       screen,
-      title: 'Allocation Type',
-      options: ['fixed', 'percent'],
-      initialIndex: 0,
-      onSelect: (allocType) => {
-        const fields = [
-          { name: 'name', label: 'Name (e.g. Rent, Savings)', initial: '' },
-        ];
-        if (allocType === 'fixed') {
-          fields.push({ name: 'amount', label: 'Amount (e.g. 500)', initial: '' });
-        } else {
-          fields.push({ name: 'percent', label: 'Percent (e.g. 10)', initial: '' });
-        }
-        fields.push({ name: 'priority', label: 'Priority (lower = first, default 100)', initial: '100' });
-
-        createFormPrompt({
-          screen,
-          title: `Add ${allocType} allocation`,
-          fields,
-          onSubmit: async (v) => {
-            const name = String(v.name || '').trim();
-            if (!name) return createMessage({ screen, title: 'Error', message: 'Name is required' });
-            const pri = Number(v.priority) || 100;
-
-            if (allocType === 'fixed') {
-              const cents = parseAmountToCents(v.amount);
-              if (cents == null) return createMessage({ screen, title: 'Error', message: 'Invalid amount' });
-              await db.run(
-                `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES (?, 'fixed', ?, 0, ?)`,
-                [name, cents, pri]
-              );
-            } else {
-              const pct = Number(v.percent);
-              if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return createMessage({ screen, title: 'Error', message: 'Percent must be 1-100' });
-              await db.run(
-                `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES (?, 'percent', 0, ?, ?)`,
-                [name, pct, pri]
-              );
-            }
-            await refreshAllocations();
-          }
-        });
+      title: 'Add — what do you need money for?',
+      fields: [
+        { name: 'name', label: 'Name (e.g. Rent, Food, Savings)', initial: '' },
+        { name: 'amount', label: 'Monthly amount (e.g. 500)', initial: '' }
+      ],
+      onSubmit: async (v) => {
+        const name = String(v.name || '').trim();
+        if (!name) return createMessage({ screen, title: 'Oops', message: 'Please enter a name.' });
+        const cents = parseAmountToCents(v.amount);
+        if (cents == null || cents <= 0) return createMessage({ screen, title: 'Oops', message: 'Please enter a valid amount.' });
+        const maxPri = await db.get(`SELECT MAX(priority) AS m FROM allocations`);
+        const pri = (maxPri?.m || 0) + 10;
+        await db.run(
+          `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES (?, 'fixed', ?, 0, ?)`,
+          [name, cents, pri]
+        );
+        await refreshAllocations();
       }
     });
   });
@@ -2211,37 +2174,23 @@ async function main() {
       try {
         const a = await db.get(`SELECT * FROM allocations WHERE id=?`, [id]);
         if (!a) return;
-        const fields = [
-          { name: 'name', label: 'Name', initial: a.name },
-        ];
-        if (a.alloc_type === 'fixed') {
-          fields.push({ name: 'amount', label: 'Amount', initial: centsToAmountInput(a.amount_cents) });
-        } else {
-          fields.push({ name: 'percent', label: 'Percent', initial: String(a.percent) });
-        }
-        fields.push({ name: 'priority', label: 'Priority (lower = first)', initial: String(a.priority) });
-
         createFormPrompt({
           screen,
-          title: `Edit allocation #${id} (${a.alloc_type})`,
-          fields,
+          title: `Edit: ${a.name}`,
+          fields: [
+            { name: 'name', label: 'Name', initial: a.name },
+            { name: 'amount', label: 'Monthly amount', initial: a.alloc_type === 'fixed' ? centsToAmountInput(a.amount_cents) : String(a.percent) }
+          ],
           onSubmit: async (v) => {
             const name = String(v.name || '').trim() || a.name;
-            const pri = Number(v.priority) || a.priority;
-            if (a.alloc_type === 'fixed') {
-              const cents = parseAmountToCents(v.amount);
-              if (cents == null) return createMessage({ screen, title: 'Error', message: 'Invalid amount' });
-              await db.run(
-                `UPDATE allocations SET name=?, amount_cents=?, priority=? WHERE id=?`,
-                [name, cents, pri, id]
-              );
+            if (a.alloc_type === 'percent') {
+              const pct = Number(v.amount);
+              if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return createMessage({ screen, title: 'Oops', message: 'Enter a number 1-100.' });
+              await db.run(`UPDATE allocations SET name=?, percent=? WHERE id=?`, [name, pct, id]);
             } else {
-              const pct = Number(v.percent);
-              if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return createMessage({ screen, title: 'Error', message: 'Percent must be 1-100' });
-              await db.run(
-                `UPDATE allocations SET name=?, percent=?, priority=? WHERE id=?`,
-                [name, pct, pri, id]
-              );
+              const cents = parseAmountToCents(v.amount);
+              if (cents == null || cents <= 0) return createMessage({ screen, title: 'Oops', message: 'Enter a valid amount.' });
+              await db.run(`UPDATE allocations SET name=?, amount_cents=? WHERE id=?`, [name, cents, id]);
             }
             await refreshAllocations();
             selectRowById(view.allocations, id);
@@ -2260,17 +2209,12 @@ async function main() {
       try {
         const a = await db.get(`SELECT * FROM allocations WHERE id=?`, [id]);
         if (!a) return;
-        createSelectPrompt({
+        createConfirm({
           screen,
-          title: `Allocation: ${a.name}`,
-          options: ['Toggle active/inactive', 'Delete permanently'],
-          initialIndex: 0,
-          onSelect: async (choice) => {
-            if (choice === 'Toggle active/inactive') {
-              await db.run(`UPDATE allocations SET active = NOT active WHERE id=?`, [id]);
-            } else {
-              await db.run(`DELETE FROM allocations WHERE id=?`, [id]);
-            }
+          title: `Delete "${a.name}"?`,
+          message: `Remove ${a.name} (${a.alloc_type === 'fixed' ? formatCents(a.amount_cents) : a.percent + '%'}/mo) from your plan?`,
+          onConfirm: async () => {
+            await db.run(`DELETE FROM allocations WHERE id=?`, [id]);
             await refreshAllocations();
           }
         });
@@ -2283,24 +2227,16 @@ async function main() {
   view.allocations.list.key(['S-a'], () => {
     createConfirm({
       screen,
-      title: 'Re-sync Allocations',
-      message: 'Scan recurring bills, budgets, and spending history to add missing allocations?\n(Existing allocations are kept unchanged.)',
+      title: 'Auto-fill from your bills?',
+      message: 'Look at your recurring bills and spending to add anything missing?',
       onConfirm: async () => {
         try {
           const count = await autoGenerateAllocations(db);
-          if (count > 0) {
-            createMessage({
-              screen,
-              title: 'Auto-Allocated',
-              message: `Added ${count} new allocation(s) from your data.`
-            });
-          } else {
-            createMessage({
-              screen,
-              title: 'Up to Date',
-              message: 'All recurring bills and budget categories are already allocated.'
-            });
-          }
+          createMessage({
+            screen,
+            title: count > 0 ? 'Done!' : 'All good',
+            message: count > 0 ? `Added ${count} new item(s).` : 'Everything is already covered.'
+          });
           await refreshAllocations();
         } catch (e) {
           createMessage({ screen, title: 'Error', message: e?.message || String(e) });

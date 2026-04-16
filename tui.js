@@ -431,12 +431,30 @@ function createTableView({ parent, label }) {
     return widths;
   };
 
+  const stripTags = (s) => s.replace(/\{[^}]*\}/g, '');
+
   const formatRow = (cells, widths) => {
     const parts = cells.map((c, i) => {
       const s = String(c ?? '');
       const w = widths[i] ?? 8;
-      const trimmed = s.length > w ? s.slice(0, Math.max(0, w - 1)) + '…' : s;
-      return trimmed.padEnd(w, ' ');
+      const visible = stripTags(s);
+      if (visible.length <= w) {
+        const pad = w - visible.length;
+        return s + ' '.repeat(pad);
+      }
+      // Need to truncate by visible chars — walk the raw string
+      let vis = 0;
+      let cutIdx = s.length;
+      for (let j = 0; j < s.length; j++) {
+        if (s[j] === '{') {
+          const end = s.indexOf('}', j);
+          if (end !== -1) { j = end; continue; }
+        }
+        vis++;
+        if (vis >= w - 1) { cutIdx = j + 1; break; }
+      }
+      // Close any open tags by appending resets
+      return s.slice(0, cutIdx) + '…{/}';
     });
     return parts.join(' | ');
   };

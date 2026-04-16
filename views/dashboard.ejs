@@ -90,4 +90,78 @@
   </div>
 </div>
 
+<% if (budgetAlerts.length) { %>
+<div class="mt-6 rounded-xl bg-slate-900 p-5 border border-slate-800">
+  <div class="flex items-center justify-between">
+    <div class="font-semibold">Budget alerts</div>
+    <a class="text-sm text-sky-300 hover:text-sky-200" href="/budgets">Manage</a>
+  </div>
+  <div class="mt-4 space-y-2">
+    <% budgetAlerts.forEach(b => { %>
+      <div class="flex items-center justify-between rounded-lg bg-slate-950/50 p-3 border border-slate-800">
+        <div>
+          <span class="font-medium"><%= b.category %></span>
+          <span class="text-xs text-slate-400 ml-2"><%= b.type %></span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-sm"><%= formatCents(b.spent) %> / <%= formatCents(b.monthly_limit_cents) %></span>
+          <span class="text-xs font-semibold px-2 py-1 rounded <%= b.over ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300' %>"><%= b.over ? 'OVER' : 'WARN' %> (<%= b.pct %>%)</span>
+        </div>
+      </div>
+    <% }) %>
+  </div>
+</div>
+<% } %>
+
+<% if (tripStats.trip_count > 0) { %>
+<div class="mt-6 rounded-xl bg-slate-900 p-5 border border-slate-800">
+  <div class="flex items-center justify-between">
+    <div class="font-semibold">Trips & Mileage (this month)</div>
+    <a class="text-sm text-sky-300 hover:text-sky-200" href="/trips">Manage</a>
+  </div>
+  <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div>
+      <div class="text-xs text-slate-400">Trips</div>
+      <div class="text-xl font-semibold mt-1"><%= tripStats.trip_count %></div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Total miles</div>
+      <div class="text-xl font-semibold mt-1"><%= tripStats.total_miles.toFixed(1) %></div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Total cost</div>
+      <div class="text-xl font-semibold mt-1"><%= formatCents(tripStats.totalCost) %></div>
+      <div class="text-xs text-slate-500">Gas: <%= formatCents(tripStats.total_gas_cents) %> + Other: <%= formatCents(tripStats.total_other_cents) %></div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Income earned</div>
+      <div class="text-xl font-semibold mt-1 text-emerald-300"><%= formatCents(tripStats.total_income_cents) %></div>
+    </div>
+  </div>
+  <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div>
+      <div class="text-xs text-slate-400">Net profit</div>
+      <div class="text-xl font-semibold mt-1 <%= tripStats.netProfit >= 0 ? 'text-emerald-300' : 'text-rose-300' %>"><%= formatCents(tripStats.netProfit) %></div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Cost / mile</div>
+      <div class="text-lg font-semibold mt-1"><%= formatCents(tripStats.costPerMile) %></div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">Profit / mile</div>
+      <div class="text-lg font-semibold mt-1 <%= tripStats.profitPerMile >= 0 ? 'text-emerald-300' : 'text-rose-300' %>"><%= formatCents(tripStats.profitPerMile) %></div>
+    </div>
+    <div>
+      <div class="text-xs text-slate-400">IRS deduction (<%= formatCents(IRS_MILEAGE_RATE_CENTS) %>/mi)</div>
+      <div class="text-lg font-semibold mt-1"><%= formatCents(tripStats.irsDeduction) %></div>
+    </div>
+  </div>
+  <div class="mt-4 p-3 rounded-lg border <%= tripStats.netProfit > 0 ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-rose-500/30 bg-rose-500/10' %>">
+    <span class="font-medium <%= tripStats.netProfit > 0 ? 'text-emerald-300' : 'text-rose-300' %>">
+      <%= tripStats.netProfit > 0 ? 'Trips are profitable this month' : 'Trips are costing more than they earn' %>
+    </span>
+  </div>
+</div>
+<% } %>
+
 <%- include('partials/bottom') %>

@@ -424,6 +424,8 @@ function createMessage({ screen, title, message }) {
     label: ` ${title} `,
     border: 'line',
     keys: true,
+    input: true,
+    focusable: true,
     width: '70%',
     height: 7,
     top: 'center',
@@ -452,14 +454,24 @@ function createMessage({ screen, title, message }) {
     content: 'Press Esc or Enter to close'
   });
 
-  box.key(['escape', 'enter', 'q'], () => {
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    screen.unkey(['escape', 'enter'], screenClose);
     box.destroy();
     screen.restoreFocus();
     screen.render();
-  });
+  };
+  const screenClose = () => close();
 
-  box.focus();
-  screen.render();
+  box.key(['escape', 'enter', 'q'], close);
+  screen.key(['escape', 'enter'], screenClose);
+
+  process.nextTick(() => {
+    box.focus();
+    screen.render();
+  });
 }
 
 async function main() {

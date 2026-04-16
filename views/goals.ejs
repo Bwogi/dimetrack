@@ -14,7 +14,10 @@
 </div>
 
 <div class="mt-6 rounded-xl bg-slate-900 p-5 border border-slate-800">
-  <div class="font-semibold">Goals</div>
+  <div class="flex items-center justify-between">
+    <div class="font-semibold">Goals</div>
+    <a class="text-xs px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 hover:bg-slate-800" href="/export/goals.csv">Export CSV</a>
+  </div>
 
   <% if (!rows.length) { %>
     <div class="text-slate-400 text-sm mt-3">No goals yet.</div>

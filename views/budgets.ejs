@@ -1,0 +1,69 @@
+<%- include('partials/top', { today }) %>
+
+<div class="rounded-xl bg-[#000000] p-5 border border-slate-800">
+  <div class="font-semibold">Set budget limit</div>
+
+  <form class="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3" method="POST" action="/budgets">
+    <select name="type" class="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800">
+      <option value="expense">expense</option>
+      <option value="income">income</option>
+    </select>
+    <input name="category" placeholder="Category (e.g. groceries)" class="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
+    <input name="monthly_limit" placeholder="Monthly limit (e.g. 500)" class="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
+    <button class="px-3 py-2 rounded-lg bg-emerald-500 text-slate-950 font-semibold hover:bg-emerald-400" type="submit">Set budget</button>
+    <a class="text-center px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 text-sm" href="/export/budgets.csv">Export CSV</a>
+  </form>
+</div>
+
+<div class="mt-6 rounded-xl bg-slate-900 p-5 border border-slate-800">
+  <div class="flex items-center justify-between">
+    <div class="font-semibold">Budget limits</div>
+    <div class="text-xs text-slate-500"><%= start %> to <%= end %></div>
+  </div>
+
+  <% if (!rows.length) { %>
+    <div class="text-slate-400 text-sm mt-3">No budgets yet. Set one above.</div>
+  <% } else { %>
+    <div class="mt-4 overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-400">
+            <th class="py-2 pr-4">Type</th>
+            <th class="py-2 pr-4">Category</th>
+            <th class="py-2 pr-4">Limit</th>
+            <th class="py-2 pr-4">Spent</th>
+            <th class="py-2 pr-4">Remaining</th>
+            <th class="py-2 pr-4">Progress</th>
+            <th class="py-2 pr-0"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% rows.forEach(b => { %>
+            <tr class="border-t border-slate-800">
+              <td class="py-2 pr-4"><span class="px-2 py-1 rounded bg-slate-950 border border-slate-800"><%= b.type %></span></td>
+              <td class="py-2 pr-4"><%= b.category %></td>
+              <td class="py-2 pr-4"><%= formatCents(b.monthly_limit_cents) %></td>
+              <td class="py-2 pr-4"><%= formatCents(b.spent) %></td>
+              <td class="py-2 pr-4 <%= b.remaining < 0 ? 'text-rose-300' : 'text-emerald-300' %>"><%= formatCents(b.remaining) %></td>
+              <td class="py-2 pr-4">
+                <div class="flex items-center gap-2">
+                  <div class="w-24 h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div class="h-2 rounded-full <%= b.pct >= 100 ? 'bg-rose-500' : b.pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500' %>" style="width:<%= Math.min(100, b.pct) %>%"></div>
+                  </div>
+                  <span class="text-xs <%= b.pct >= 100 ? 'text-rose-300' : b.pct >= 80 ? 'text-amber-300' : 'text-slate-400' %>"><%= b.pct %>%</span>
+                </div>
+              </td>
+              <td class="py-2 pr-0">
+                <form method="POST" action="/budgets/<%= b.id %>/delete" onsubmit="return confirm('Delete this budget?')">
+                  <button class="text-xs px-2 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800" type="submit">Delete</button>
+                </form>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<%- include('partials/bottom') %>

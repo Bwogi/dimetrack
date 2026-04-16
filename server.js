@@ -5,9 +5,15 @@ import PDFDocument from 'pdfkit';
 import {
   addDays,
   addMonths,
+  estimateGasCost,
+  exportToCsv,
   formatCents,
   getDb,
+  getMonthlySpendByCategory,
+  getMonthlyTripSummary,
+  getVehicleSettings,
   initDb,
+  IRS_MILEAGE_RATE_CENTS,
   isoDateOnly,
   parseAmountToCents
 } from './db.js';
@@ -61,11 +67,27 @@ app.get('/', async (req, res) => {
   const db = await getDb();
   const today = isoDateOnly(new Date());
   const dash = await computeDashboard(db, today);
+  const { start, end } = monthRange(today);
+
+  const budgets = await db.all(`SELECT * FROM budgets ORDER BY type ASC, category ASC`);
+  const spending = await getMonthlySpendByCategory(db, start, end);
+  const spendMap = {};
+  for (const s of spending) spendMap[s.category] = s.spent_cents;
+  const budgetAlerts = budgets.map(b => {
+    const spent = spendMap[b.category] || 0;
+    const pct = b.monthly_limit_cents ? Math.round((spent / b.monthly_limit_cents) * 100) : 0;
+    return { ...b, spent, pct, over: pct >= 100, warn: pct >= 80 };
+  }).filter(b => b.warn || b.over);
+
+  const tripStats = await getMonthlyTripSummary(db, start, end);
 
   res.render('dashboard', {
     today,
     dash,
-    formatCents
+    budgetAlerts,
+    tripStats,
+    formatCents,
+    IRS_MILEAGE_RATE_CENTS
   });
 });
 
@@ -398,6 +420,160 @@ app.post('/goals/:id/delete', async (req, res) => {
   const db = await getDb();
   await db.run(`DELETE FROM goals WHERE id=?`, [id]);
   res.redirect('/goals');
+});
+
+// ── Budgets ──────────────────────────────────────────────────
+app.get('/budgets', async (req, res) => {
+  const db = await getDb();
+  const today = isoDateOnly(new Date());
+  const { start, end } = monthRange(today);
+  const budgets = await db.all(`SELECT * FROM budgets ORDER BY type ASC, category ASC`);
+  const spending = await getMonthlySpendByCategory(db, start, end);
+  const spendMap = {};
+  for (const s of spending) spendMap[s.category] = s.spent_cents;
+  const rows = budgets.map(b => {
+    const spent = spendMap[b.category] || 0;
+    const remaining = b.monthly_limit_cents - spent;
+    const pct = b.monthly_limit_cents ? Math.round((spent / b.monthly_limit_cents) * 100) : 0;
+    return { ...b, spent, remaining, pct };
+  });
+  res.render('budgets', { today, rows, formatCents, start, end });
+});
+
+app.post('/budgets', async (req, res) => {
+  const { type, category, monthly_limit } = req.body;
+  if (!['income', 'expense'].includes(type) || !category) return res.status(400).send('Invalid budget');
+  const limitCents = parseAmountToCents(monthly_limit);
+  if (limitCents === null || limitCents <= 0) return res.status(400).send('Invalid limit');
+  const db = await getDb();
+  await db.run(
+    `INSERT OR REPLACE INTO budgets (type, category, monthly_limit_cents) VALUES (?, ?, ?)`,
+    [type, category.trim(), limitCents]
+  );
+  res.redirect('/budgets');
+});
+
+app.post('/budgets/:id/delete', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).send('Invalid id');
+  const db = await getDb();
+  await db.run(`DELETE FROM budgets WHERE id = ?`, [id]);
+  res.redirect('/budgets');
+});
+
+// ── Trips & Mileage ─────────────────────────────────────────
+app.get('/trips', async (req, res) => {
+  const db = await getDb();
+  const today = isoDateOnly(new Date());
+  const rows = await db.all(`SELECT * FROM trips ORDER BY date DESC, id DESC LIMIT 500`);
+  const vs = await getVehicleSettings(db);
+  res.render('trips', { today, rows, vs, formatCents, estimateGasCost, IRS_MILEAGE_RATE_CENTS });
+});
+
+app.post('/trips', async (req, res) => {
+  const { destination, date, odo_start, odo_end, gas_cost, other_cost, income, note } = req.body;
+  if (!destination || !String(destination).trim()) return res.status(400).send('Missing destination');
+
+  const dt = (date && String(date).trim()) || isoDateOnly(new Date());
+  const odoStart = Number(odo_start);
+  const odoEnd = Number(odo_end);
+  if (!Number.isFinite(odoStart) || !Number.isFinite(odoEnd)) return res.status(400).send('Invalid odometer');
+  if (odoEnd < odoStart) return res.status(400).send('Odometer end must be >= start');
+  const miles = odoEnd - odoStart;
+
+  const db = await getDb();
+  const vs = await getVehicleSettings(db);
+  let gasCents;
+  let gasEstimated;
+  const gasRaw = String(gas_cost || '').trim();
+  if (gasRaw === '') {
+    gasCents = estimateGasCost(miles, vs.mpg, vs.gas_price_cents);
+    gasEstimated = 1;
+  } else {
+    gasCents = parseAmountToCents(gasRaw);
+    if (gasCents === null) return res.status(400).send('Invalid gas cost');
+    gasEstimated = 0;
+  }
+
+  const otherCents = parseAmountToCents(other_cost) ?? 0;
+  const incomeCents = parseAmountToCents(income);
+  if (incomeCents === null) return res.status(400).send('Invalid income');
+
+  await db.run(
+    `INSERT INTO trips (destination, date, odometer_start, odometer_end, miles, gas_cost_cents, gas_estimated, other_cost_cents, income_cents, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [destination.trim(), dt, odoStart, odoEnd, miles, gasCents, gasEstimated, otherCents, incomeCents, note || null]
+  );
+  res.redirect('/trips');
+});
+
+app.post('/trips/:id/delete', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).send('Invalid id');
+  const db = await getDb();
+  await db.run(`DELETE FROM trips WHERE id = ?`, [id]);
+  res.redirect('/trips');
+});
+
+app.post('/vehicle-settings', async (req, res) => {
+  const mpg = Number(req.body.mpg);
+  const priceCents = parseAmountToCents(req.body.gas_price);
+  if (!Number.isFinite(mpg) || mpg <= 0) return res.status(400).send('Invalid MPG');
+  if (priceCents === null || priceCents <= 0) return res.status(400).send('Invalid gas price');
+  const db = await getDb();
+  await db.run(`UPDATE vehicle_settings SET mpg=?, gas_price_cents=? WHERE id=1`, [mpg, priceCents]);
+  res.redirect('/trips');
+});
+
+// ── CSV Export ───────────────────────────────────────────────
+app.get('/export/:section.csv', async (req, res) => {
+  const db = await getDb();
+  const section = req.params.section;
+  let columns, rows;
+
+  if (section === 'transactions') {
+    const data = await db.all(`SELECT * FROM transactions ORDER BY date DESC, id DESC`);
+    columns = ['ID', 'Date', 'Type', 'Category', 'Amount', 'Note'];
+    rows = data.map(r => [r.id, r.date, r.type, r.category, formatCents(r.amount_cents), r.note || '']);
+  } else if (section === 'recurring') {
+    const data = await db.all(`SELECT * FROM recurring ORDER BY active DESC, next_due_date ASC`);
+    columns = ['ID', 'Name', 'Type', 'Amount', 'Category', 'Cadence', 'Next Due', 'Active'];
+    rows = data.map(r => [r.id, r.name, r.type, formatCents(r.amount_cents), r.category, r.cadence, r.next_due_date, r.active ? 'Yes' : 'No']);
+  } else if (section === 'goals') {
+    const data = await db.all(`SELECT * FROM goals ORDER BY created_at DESC`);
+    columns = ['ID', 'Name', 'Target', 'Current', 'Progress', 'Due Date'];
+    rows = data.map(g => {
+      const pct = g.target_cents ? Math.round((g.current_cents / g.target_cents) * 100) : 0;
+      return [g.id, g.name, formatCents(g.target_cents), formatCents(g.current_cents), `${pct}%`, g.due_date || ''];
+    });
+  } else if (section === 'budgets') {
+    const today = isoDateOnly(new Date());
+    const { start, end } = monthRange(today);
+    const data = await db.all(`SELECT * FROM budgets ORDER BY type, category`);
+    const spending = await getMonthlySpendByCategory(db, start, end);
+    const spendMap = {};
+    for (const s of spending) spendMap[s.category] = s.spent_cents;
+    columns = ['ID', 'Type', 'Category', 'Limit', 'Spent', 'Remaining', 'Status'];
+    rows = data.map(b => {
+      const spent = spendMap[b.category] || 0;
+      const pct = b.monthly_limit_cents ? Math.round((spent / b.monthly_limit_cents) * 100) : 0;
+      const status = pct >= 100 ? 'OVER' : pct >= 80 ? 'WARN' : 'OK';
+      return [b.id, b.type, b.category, formatCents(b.monthly_limit_cents), formatCents(spent), formatCents(b.monthly_limit_cents - spent), `${status} (${pct}%)`];
+    });
+  } else if (section === 'trips') {
+    const data = await db.all(`SELECT * FROM trips ORDER BY date DESC, id DESC`);
+    columns = ['ID', 'Date', 'Destination', 'Odo Start', 'Odo End', 'Miles', 'Gas', 'Other Costs', 'Income', 'Net', 'Note'];
+    rows = data.map(t => {
+      const net = t.income_cents - t.gas_cost_cents - t.other_cost_cents;
+      return [t.id, t.date, t.destination, t.odometer_start ?? '', t.odometer_end ?? '', t.miles, formatCents(t.gas_cost_cents), formatCents(t.other_cost_cents), formatCents(t.income_cents), formatCents(net), t.note || ''];
+    });
+  } else {
+    return res.status(404).send('Unknown section');
+  }
+
+  const csv = exportToCsv(columns, rows);
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="${section}.csv"`);
+  res.send(csv);
 });
 
 const PORT = process.env.PORT || 3000;

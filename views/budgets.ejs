@@ -1,5 +1,44 @@
 <%- include('partials/top', { today }) %>
 
+<%
+  const overCount = rows.filter(b => b.pct >= 100).length;
+  const warnCount = rows.filter(b => b.pct >= 80 && b.pct < 100).length;
+  const okCount = rows.filter(b => b.pct < 80).length;
+  const totalLimit = rows.reduce((s,b) => s + b.monthly_limit_cents, 0);
+  const totalSpent = rows.reduce((s,b) => s + b.spent, 0);
+  const totalRemaining = totalLimit - totalSpent;
+  const overallPct = totalLimit ? Math.round((totalSpent / totalLimit) * 100) : 0;
+%>
+
+<% if (rows.length) { %>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Total budgeted</div>
+    <div class="text-xl font-semibold mt-1"><%= formatCents(totalLimit) %></div>
+    <div class="text-xs text-slate-500 mt-1"><%= start %> to <%= end %></div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Total spent</div>
+    <div class="text-xl font-semibold mt-1 <%= overallPct >= 100 ? 'text-rose-300' : overallPct >= 80 ? 'text-amber-300' : 'text-emerald-300' %>"><%= formatCents(totalSpent) %></div>
+    <div class="w-full h-2 bg-slate-800 rounded-full mt-2 overflow-hidden">
+      <div class="h-2 rounded-full <%= overallPct >= 100 ? 'bg-rose-500' : overallPct >= 80 ? 'bg-amber-500' : 'bg-emerald-500' %>" style="width:<%= Math.min(100, overallPct) %>%"></div>
+    </div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Remaining</div>
+    <div class="text-xl font-semibold mt-1 <%= totalRemaining < 0 ? 'text-rose-300' : 'text-emerald-300' %>"><%= formatCents(totalRemaining) %></div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Status</div>
+    <div class="flex flex-wrap gap-2 mt-2">
+      <% if (overCount) { %><span class="text-xs px-2 py-1 rounded bg-rose-500/20 text-rose-300 font-semibold"><%= overCount %> over</span><% } %>
+      <% if (warnCount) { %><span class="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-300"><%= warnCount %> warn</span><% } %>
+      <% if (okCount) { %><span class="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-300"><%= okCount %> on track</span><% } %>
+    </div>
+  </div>
+</div>
+<% } %>
+
 <div class="rounded-xl bg-[#000000] p-5 border border-slate-800">
   <div class="font-semibold">Set budget limit</div>
 
@@ -24,44 +63,51 @@
   <% if (!rows.length) { %>
     <div class="text-slate-400 text-sm mt-3">No budgets yet. Set one above.</div>
   <% } else { %>
-    <div class="mt-4 overflow-x-auto">
-      <table class="min-w-full text-sm">
-        <thead>
-          <tr class="text-left text-slate-400">
-            <th class="py-2 pr-4">Type</th>
-            <th class="py-2 pr-4">Category</th>
-            <th class="py-2 pr-4">Limit</th>
-            <th class="py-2 pr-4">Spent</th>
-            <th class="py-2 pr-4">Remaining</th>
-            <th class="py-2 pr-4">Progress</th>
-            <th class="py-2 pr-0"></th>
-          </tr>
-        </thead>
-        <tbody>
-          <% rows.forEach(b => { %>
-            <tr class="border-t border-slate-800">
-              <td class="py-2 pr-4"><span class="px-2 py-1 rounded bg-slate-950 border border-slate-800"><%= b.type %></span></td>
-              <td class="py-2 pr-4"><%= b.category %></td>
-              <td class="py-2 pr-4"><%= formatCents(b.monthly_limit_cents) %></td>
-              <td class="py-2 pr-4"><%= formatCents(b.spent) %></td>
-              <td class="py-2 pr-4 <%= b.remaining < 0 ? 'text-rose-300' : 'text-emerald-300' %>"><%= formatCents(b.remaining) %></td>
-              <td class="py-2 pr-4">
-                <div class="flex items-center gap-2">
-                  <div class="w-24 h-2 bg-slate-800 rounded-full overflow-hidden">
-                    <div class="h-2 rounded-full <%= b.pct >= 100 ? 'bg-rose-500' : b.pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500' %>" style="width:<%= Math.min(100, b.pct) %>%"></div>
-                  </div>
-                  <span class="text-xs <%= b.pct >= 100 ? 'text-rose-300' : b.pct >= 80 ? 'text-amber-300' : 'text-slate-400' %>"><%= b.pct %>%</span>
+    <div class="mt-4 space-y-3">
+      <% rows.forEach(b => {
+        const barColor = b.pct >= 100 ? 'bg-rose-500' : b.pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
+        const textColor = b.pct >= 100 ? 'text-rose-300' : b.pct >= 80 ? 'text-amber-300' : 'text-emerald-300';
+        const borderColor = b.pct >= 100 ? 'border-rose-500/30' : b.pct >= 80 ? 'border-amber-500/30' : 'border-slate-800';
+        const bgColor = b.pct >= 100 ? 'bg-rose-500/5' : b.pct >= 80 ? 'bg-amber-500/5' : 'bg-slate-950/50';
+      %>
+        <div class="rounded-lg p-4 border <%= borderColor %> <%= bgColor %>">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div class="md:w-1/4">
+              <div class="flex items-center gap-2">
+                <span class="font-semibold"><%= b.category %></span>
+                <span class="text-xs px-2 py-0.5 rounded <%= b.type === 'expense' ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/20 text-emerald-300' %>"><%= b.type %></span>
+              </div>
+            </div>
+
+            <div class="flex-1">
+              <div class="flex items-center gap-3">
+                <div class="flex-1 h-3 bg-slate-800 rounded-full overflow-hidden">
+                  <div class="h-3 rounded-full transition-all <%= barColor %>" style="width:<%= Math.min(100, b.pct) %>%"></div>
                 </div>
-              </td>
-              <td class="py-2 pr-0">
-                <form method="POST" action="/budgets/<%= b.id %>/delete" onsubmit="return confirm('Delete this budget?')">
-                  <button class="text-xs px-2 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800" type="submit">Delete</button>
-                </form>
-              </td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
+                <span class="text-sm font-semibold w-14 text-right <%= textColor %>"><%= b.pct %>%</span>
+              </div>
+              <div class="flex justify-between mt-1 text-xs text-slate-500">
+                <span>Spent: <span class="<%= textColor %>"><%= formatCents(b.spent) %></span></span>
+                <span>Limit: <%= formatCents(b.monthly_limit_cents) %></span>
+                <span>Left: <span class="<%= b.remaining < 0 ? 'text-rose-300' : 'text-emerald-300' %>"><%= formatCents(b.remaining) %></span></span>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <% if (b.pct >= 100) { %>
+                <span class="text-xs px-2 py-1 rounded bg-rose-500/20 text-rose-300 font-semibold">OVER</span>
+              <% } else if (b.pct >= 80) { %>
+                <span class="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-300 font-semibold">WARN</span>
+              <% } else { %>
+                <span class="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-300">OK</span>
+              <% } %>
+              <form method="POST" action="/budgets/<%= b.id %>/delete" onsubmit="return confirm('Delete this budget?')">
+                <button class="text-xs px-2 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800" type="submit">Delete</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      <% }) %>
     </div>
   <% } %>
 </div>

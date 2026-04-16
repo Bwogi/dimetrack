@@ -1,6 +1,39 @@
 <%- include('partials/top', { today }) %>
 
-<div class="rounded-xl bg-slate-900 p-5 border border-slate-800">
+<%
+  const completed = rows.filter(g => g.target_cents && g.current_cents >= g.target_cents);
+  const inProgress = rows.filter(g => !g.target_cents || g.current_cents < g.target_cents);
+  const totalTarget = rows.reduce((s,g) => s + g.target_cents, 0);
+  const totalCurrent = rows.reduce((s,g) => s + g.current_cents, 0);
+  const overallPct = totalTarget ? Math.min(100, Math.round((totalCurrent / totalTarget) * 100)) : 0;
+%>
+
+<% if (rows.length) { %>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Total goals</div>
+    <div class="text-2xl font-semibold mt-1"><%= rows.length %></div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Completed</div>
+    <div class="text-2xl font-semibold text-emerald-300 mt-1"><%= completed.length %></div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Saved so far</div>
+    <div class="text-xl font-semibold text-emerald-300 mt-1"><%= formatCents(totalCurrent) %></div>
+    <div class="text-xs text-slate-500 mt-1">of <%= formatCents(totalTarget) %></div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Overall progress</div>
+    <div class="text-xl font-semibold mt-1"><%= overallPct %>%</div>
+    <div class="w-full h-2 bg-slate-800 rounded-full mt-2 overflow-hidden">
+      <div class="h-2 rounded-full <%= overallPct >= 100 ? 'bg-emerald-400' : overallPct >= 60 ? 'bg-amber-400' : 'bg-sky-400' %>" style="width:<%= overallPct %>%"></div>
+    </div>
+  </div>
+</div>
+<% } %>
+
+<div class="rounded-xl bg-[#000000] p-5 border border-slate-800">
   <div class="font-semibold">Add goal</div>
   <div class="text-xs text-slate-500 mt-1">Examples: Pay off car, Rent buffer, Emergency fund.</div>
 
@@ -8,7 +41,8 @@
     <input name="name" placeholder="Goal name" class="md:col-span-2 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
     <input name="target" placeholder="Target amount" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
     <input name="due_date" type="date" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" />
-    <button class="md:col-span-2 px-3 py-2 rounded-lg bg-emerald-500 text-slate-950 font-semibold hover:bg-emerald-400" type="submit">Add goal</button>
+    <button class="md:col-span-1 px-3 py-2 rounded-lg bg-emerald-500 text-slate-950 font-semibold hover:bg-emerald-400" type="submit">Add goal</button>
+    <a class="md:col-span-1 text-center px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 text-sm" href="/export/goals.csv">Export CSV</a>
     <input name="note" placeholder="Note (optional)" class="md:col-span-6 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" />
   </form>
 </div>
@@ -16,42 +50,66 @@
 <div class="mt-6 rounded-xl bg-slate-900 p-5 border border-slate-800">
   <div class="flex items-center justify-between">
     <div class="font-semibold">Goals</div>
-    <a class="text-xs px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 hover:bg-slate-800" href="/export/goals.csv">Export CSV</a>
+    <div class="flex items-center gap-2">
+      <span class="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-300"><%= completed.length %> done</span>
+      <span class="text-xs px-2 py-1 rounded bg-sky-500/20 text-sky-300"><%= inProgress.length %> active</span>
+    </div>
   </div>
 
   <% if (!rows.length) { %>
-    <div class="text-slate-400 text-sm mt-3">No goals yet.</div>
+    <div class="text-slate-400 text-sm mt-3">No goals yet. Add one above.</div>
   <% } else { %>
     <div class="mt-4 space-y-4">
       <% rows.forEach(g => { 
         const pct = g.target_cents ? Math.min(100, Math.round((g.current_cents / g.target_cents) * 100)) : 0;
+        const done = pct >= 100;
+        const barColor = done ? 'bg-emerald-400' : pct >= 60 ? 'bg-amber-400' : 'bg-sky-400';
+        const remaining = Math.max(0, g.target_cents - g.current_cents);
       %>
-        <div class="rounded-lg bg-slate-950/50 p-4 border border-slate-800">
-          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div class="min-w-0">
-              <div class="font-semibold"><%= g.name %></div>
-              <div class="text-xs text-slate-400 mt-1"><%= formatCents(g.current_cents) %> / <%= formatCents(g.target_cents) %> (<%= pct %>%)</div>
+        <div class="rounded-lg p-4 border <%= done ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-950/50 border-slate-800' %>">
+          <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+            <div class="min-w-0 flex-shrink-0 md:w-1/3">
+              <div class="flex items-center gap-2">
+                <% if (done) { %>
+                  <span class="text-emerald-400 text-lg">✓</span>
+                <% } %>
+                <div class="font-semibold text-lg"><%= g.name %></div>
+              </div>
+              <div class="text-sm mt-1">
+                <span class="text-emerald-300 font-medium"><%= formatCents(g.current_cents) %></span>
+                <span class="text-slate-500"> / <%= formatCents(g.target_cents) %></span>
+              </div>
+              <% if (!done) { %>
+                <div class="text-xs text-slate-500 mt-1"><%= formatCents(remaining) %> remaining</div>
+              <% } %>
               <% if (g.due_date) { %>
                 <div class="text-xs text-slate-500 mt-1">Due: <%= g.due_date %></div>
               <% } %>
               <% if (g.note) { %>
-                <div class="text-xs text-slate-500 mt-1"><%= g.note %></div>
+                <div class="text-xs text-slate-400 mt-1 italic"><%= g.note %></div>
               <% } %>
             </div>
 
             <div class="flex-1">
-              <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
-                <div class="h-2 bg-emerald-500" style="width: <%= pct %>%;"></div>
+              <div class="flex items-center gap-3 mb-1">
+                <div class="flex-1 h-3 bg-slate-800 rounded-full overflow-hidden">
+                  <div class="h-3 rounded-full transition-all <%= barColor %>" style="width:<%= pct %>%"></div>
+                </div>
+                <span class="text-sm font-semibold w-12 text-right <%= done ? 'text-emerald-300' : '' %>"><%= pct %>%</span>
               </div>
 
               <div class="mt-3 flex flex-wrap items-center gap-2">
+                <% if (!done) { %>
                 <form class="flex items-center gap-2" method="POST" action="/goals/<%= g.id %>/progress">
-                  <input name="amount" placeholder="Add progress ($)" class="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
-                  <button class="px-3 py-2 rounded-lg bg-sky-300 text-slate-950 font-semibold hover:bg-sky-200" type="submit">Add</button>
+                  <input name="amount" placeholder="Add $" class="w-28 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-sm" required />
+                  <button class="px-3 py-2 rounded-lg bg-sky-300 text-slate-950 font-semibold hover:bg-sky-200 text-sm" type="submit">+Add</button>
                 </form>
+                <% } else { %>
+                  <span class="text-sm text-emerald-300 font-medium">Goal reached!</span>
+                <% } %>
 
                 <form method="POST" action="/goals/<%= g.id %>/delete" onsubmit="return confirm('Delete this goal?')">
-                  <button class="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 hover:bg-slate-800" type="submit">Delete</button>
+                  <button class="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 hover:bg-slate-800 text-sm" type="submit">Delete</button>
                 </form>
               </div>
             </div>

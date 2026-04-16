@@ -35,8 +35,29 @@ const THEME = {
   accentBg: '#66ff99',
   accentFg: '#000000',
   danger: '#ff4d4d',
-  warn: '#ffd24d'
+  warn: '#ffd24d',
+  income: '#4dff91',
+  expense: '#ff6b6b',
+  dimmed: '#555555'
 };
+
+function progressBar(pct, width = 20, filled = '█', empty = '░') {
+  const clamped = Math.max(0, Math.min(100, pct));
+  const fill = Math.round((clamped / 100) * width);
+  return filled.repeat(fill) + empty.repeat(width - fill);
+}
+
+function sparkBar(value, maxValue, width = 15) {
+  if (!maxValue || maxValue <= 0) return '░'.repeat(width);
+  const pct = Math.min(1, Math.abs(value) / maxValue);
+  const fill = Math.round(pct * width);
+  return '▓'.repeat(fill) + '░'.repeat(width - fill);
+}
+
+function boxLine(label, value, width = 30) {
+  const pad = width - label.length - value.length;
+  return label + (pad > 0 ? ' '.repeat(pad) : ' ') + value;
+}
 
 function monthRange(isoDate) {
   const d = new Date(`${isoDate}T00:00:00`);
@@ -419,6 +440,8 @@ function createTableView({ parent, label }) {
 
 function createMessage({ screen, title, message }) {
   screen.saveFocus();
+  const lineCount = message.split('\n').length;
+  const boxHeight = Math.max(7, lineCount + 5);
   const box = blessed.box({
     parent: screen,
     label: ` ${title} `,
@@ -426,8 +449,8 @@ function createMessage({ screen, title, message }) {
     keys: true,
     input: true,
     focusable: true,
-    width: '70%',
-    height: 7,
+    width: '80%',
+    height: boxHeight,
     top: 'center',
     left: 'center',
     style: {
@@ -448,7 +471,7 @@ function createMessage({ screen, title, message }) {
 
   blessed.text({
     parent: box,
-    top: 4,
+    top: lineCount + 2,
     left: 2,
     fg: THEME.muted,
     content: 'Press Esc or Enter to close'
@@ -513,11 +536,8 @@ async function main() {
     width: '100%',
     tags: true,
     style: { bg: THEME.headerBg, fg: THEME.headerFg },
-    content:
-      ' {bold}DimeTrack{/bold}  ' +
-      '{gray-fg}Dashboard(d)  Transactions(t)  Recurring(r)  Goals(g)  Budgets(b)  Trips(m)  Help(h){/gray-fg}'
+    content: ''
   });
-  void header;
 
   const footer = blessed.box({
     parent: screen,
@@ -527,11 +547,42 @@ async function main() {
     width: '100%',
     tags: true,
     style: { bg: THEME.footerBg, fg: THEME.footerFg },
-    content:
-      ` {${THEME.footerFg}-fg}{bold}Shortcuts{/bold}{/${THEME.footerFg}-fg}  ` +
-      'a:add  enter:edit  del:delete/toggle  p:post recur  /:filter  e:export  Tab:cycle  q:quit'
+    content: ''
   });
-  void footer;
+
+  const navItems = [
+    { key: 'd', name: 'Dashboard', view: 'dashboard' },
+    { key: 't', name: 'Transactions', view: 'tx' },
+    { key: 'r', name: 'Recurring', view: 'recurring' },
+    { key: 'g', name: 'Goals', view: 'goals' },
+    { key: 'b', name: 'Budgets', view: 'budgets' },
+    { key: 'm', name: 'Trips', view: 'trips' },
+    { key: 'h', name: 'Help', view: null }
+  ];
+
+  const footerShortcuts = {
+    dashboard: 'Scroll: ↑↓  Navigate: d t r g b m  Tab:cycle  q:quit',
+    tx:        'a:add  enter:edit  del:delete  /:search  f:date range  e:export  Tab:cycle  q:quit',
+    recurring: 'a:add  enter:edit  del:toggle  p:post  /:search  e:export  Tab:cycle  q:quit',
+    goals:     'a:add  enter:edit(+$)  del:delete  /:search  e:export  Tab:cycle  q:quit',
+    budgets:   'a:add  enter:edit  del:delete  /:search  e:export  Tab:cycle  q:quit',
+    trips:     'a:add  enter:edit  del:delete  v:vehicle  /:search  e:export  Tab:cycle  q:quit'
+  };
+
+  function updateChrome() {
+    const now = new Date();
+    const clock = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const nav = navItems.map(n => {
+      if (n.view === currentView) {
+        return `{bold}{black-fg}{green-bg} ${n.name}(${n.key}) {/green-bg}{/black-fg}{/bold}`;
+      }
+      return `{gray-fg} ${n.name}(${n.key}) {/gray-fg}`;
+    }).join('');
+    header.setContent(` {bold}{green-fg}◆ DimeTrack{/green-fg}{/bold} ${nav}  {gray-fg}${clock}{/gray-fg}`);
+
+    const shortcuts = footerShortcuts[currentView] || footerShortcuts.dashboard;
+    footer.setContent(` {bold}Shortcuts{/bold}  ${shortcuts}`);
+  }
 
   const mainBox = blessed.box({
     parent: screen,
@@ -596,6 +647,7 @@ async function main() {
       view.dashboard.focus();
     }
 
+    updateChrome();
     screen.render();
     void refresh();
   }
@@ -610,33 +662,53 @@ async function main() {
   async function refreshDashboard() {
     const today = isoDateOnly(new Date());
     const dash = await computeDashboard(db, today);
+    const sep = '{gray-fg}' + '─'.repeat(52) + '{/gray-fg}';
 
     const lines = [];
-    lines.push(`{bold}Today{/bold}: ${today}`);
-    lines.push(`{bold}Month{/bold}: ${dash.monthStart} .. ${dash.monthEnd}`);
+    lines.push(`{bold}{green-fg}┌─ DimeTrack Dashboard ─┐{/green-fg}{/bold}  ${today}`);
+    lines.push(`{gray-fg}│{/gray-fg} Month: ${dash.monthStart} .. ${dash.monthEnd}`);
     lines.push('');
-    lines.push(`{bold}Income{/bold}:  ${formatCents(dash.incomeCents)}`);
-    lines.push(`{bold}Expense{/bold}: ${formatCents(dash.expenseCents)}`);
-    lines.push(`{bold}Net{/bold}:     ${formatCents(dash.netCents)}`);
+
+    const maxAmt = Math.max(dash.incomeCents, dash.expenseCents, 1);
+    lines.push('{bold}  Monthly Overview{/bold}');
+    lines.push(`  {green-fg}▲ Income {/green-fg} ${formatCents(dash.incomeCents).padStart(10)}  {green-fg}${sparkBar(dash.incomeCents, maxAmt)}{/green-fg}`);
+    lines.push(`  {red-fg}▼ Expense{/red-fg} ${formatCents(dash.expenseCents).padStart(10)}  {red-fg}${sparkBar(dash.expenseCents, maxAmt)}{/red-fg}`);
+    const netColor = dash.netCents >= 0 ? 'green' : 'red';
+    const netIcon = dash.netCents >= 0 ? '◆' : '◇';
+    lines.push(`  {${netColor}-fg}${netIcon} Net    {/${netColor}-fg} ${formatCents(dash.netCents).padStart(10)}  {${netColor}-fg}${sparkBar(dash.netCents, maxAmt)}{/${netColor}-fg}`);
 
     lines.push('');
-    lines.push('{bold}Goals{/bold}:');
-    if (!dash.goals.length) lines.push('  (none)');
-    for (const g of dash.goals) {
-      const pct = g.target_cents ? Math.round((g.current_cents / g.target_cents) * 100) : 0;
-      lines.push(
-        `  #${g.id} ${g.name} ${formatCents(g.current_cents)}/${formatCents(g.target_cents)} (${pct}%)` +
-          (g.due_date ? ` due ${g.due_date}` : '')
-      );
+    lines.push(sep);
+
+    lines.push('');
+    lines.push('{bold}  🎯 Goals{/bold}');
+    if (!dash.goals.length) {
+      lines.push('  {gray-fg}No goals yet — press g then a to add one{/gray-fg}');
+    } else {
+      for (const g of dash.goals) {
+        const pct = g.target_cents ? Math.round((g.current_cents / g.target_cents) * 100) : 0;
+        const barColor = pct >= 100 ? 'green' : pct >= 60 ? 'yellow' : 'white';
+        const bar = progressBar(pct, 20);
+        lines.push(`  {bold}${g.name}{/bold}` + (g.due_date ? `  {gray-fg}due ${g.due_date}{/gray-fg}` : ''));
+        lines.push(`  {${barColor}-fg}${bar}{/${barColor}-fg} ${pct}%  ${formatCents(g.current_cents)} / ${formatCents(g.target_cents)}`);
+      }
     }
 
     lines.push('');
-    lines.push('{bold}Upcoming recurring{/bold}:');
-    if (!dash.upcomingRecurring.length) lines.push('  (none)');
-    for (const r of dash.upcomingRecurring) {
-      lines.push(
-        `  #${r.id} ${r.name} ${r.type} ${formatCents(r.amount_cents)} ${r.category} next ${r.next_due_date}`
-      );
+    lines.push(sep);
+
+    lines.push('');
+    lines.push('{bold}  📅 Upcoming Recurring{/bold}');
+    if (!dash.upcomingRecurring.length) {
+      lines.push('  {gray-fg}No upcoming items{/gray-fg}');
+    } else {
+      for (const r of dash.upcomingRecurring) {
+        const typeTag = r.type === 'expense' ? '{red-fg}expense{/red-fg}' : '{green-fg}income{/green-fg}';
+        const daysLeft = Math.round((new Date(`${r.next_due_date}T00:00:00`) - new Date(`${today}T00:00:00`)) / 86400000);
+        const urgency = daysLeft <= 3 ? '{red-fg}' : daysLeft <= 7 ? '{yellow-fg}' : '{gray-fg}';
+        const urgencyClose = daysLeft <= 3 ? '{/red-fg}' : daysLeft <= 7 ? '{/yellow-fg}' : '{/gray-fg}';
+        lines.push(`  ${urgency}${r.next_due_date}${urgencyClose}  ${r.name.padEnd(18)}  ${typeTag}  ${formatCents(r.amount_cents).padStart(10)}  {gray-fg}${r.cadence}{/gray-fg}`);
+      }
     }
 
     const budgets = await db.all(`SELECT * FROM budgets ORDER BY type ASC, category ASC`);
@@ -645,39 +717,48 @@ async function main() {
       const spendMap = {};
       for (const s of spending) spendMap[s.category] = s.spent_cents;
 
-      const alerts = [];
+      lines.push('');
+      lines.push(sep);
+      lines.push('');
+      lines.push('{bold}  💰 Budget Tracking{/bold}');
+
       for (const b of budgets) {
         const spent = spendMap[b.category] || 0;
         const pct = b.monthly_limit_cents ? Math.round((spent / b.monthly_limit_cents) * 100) : 0;
-        if (pct >= 80) {
-          const tag = pct >= 100 ? '{red-fg}OVER{/red-fg}' : '{yellow-fg}WARN{/yellow-fg}';
-          alerts.push(`  ${tag} ${b.category}: ${formatCents(spent)} / ${formatCents(b.monthly_limit_cents)} (${pct}%)`);
-        }
+        const barColor = pct >= 100 ? 'red' : pct >= 80 ? 'yellow' : 'green';
+        const bar = progressBar(pct, 16);
+        const tag = pct >= 100 ? ' {red-fg}OVER{/red-fg}' : pct >= 80 ? ' {yellow-fg}WARN{/yellow-fg}' : '';
+        lines.push(`  ${b.category.padEnd(14)} {${barColor}-fg}${bar}{/${barColor}-fg} ${String(pct).padStart(3)}%  ${formatCents(spent).padStart(9)} / ${formatCents(b.monthly_limit_cents)}${tag}`);
       }
-      lines.push('');
-      lines.push('{bold}Budget Alerts{/bold}:');
-      if (!alerts.length) lines.push('  All budgets on track');
-      else for (const a of alerts) lines.push(a);
     }
 
     const tripStats = await getMonthlyTripSummary(db, dash.monthStart, dash.monthEnd);
     if (tripStats.trip_count > 0) {
       lines.push('');
-      lines.push('{bold}Trips & Mileage (this month){/bold}:');
-      lines.push(`  Trips: ${tripStats.trip_count}   Miles: ${tripStats.total_miles.toFixed(1)}`);
-      lines.push(`  Gas: ${formatCents(tripStats.total_gas_cents)}   Other costs: ${formatCents(tripStats.total_other_cents)}   Total cost: ${formatCents(tripStats.totalCost)}`);
-      lines.push(`  Income earned: ${formatCents(tripStats.total_income_cents)}`);
+      lines.push(sep);
+      lines.push('');
+      lines.push('{bold}  🚗 Trips & Mileage (this month){/bold}');
+      lines.push('');
+      lines.push(`  Trips: {bold}${tripStats.trip_count}{/bold}     Miles: {bold}${tripStats.total_miles.toFixed(1)}{/bold}`);
+      lines.push('');
+      lines.push(`  {gray-fg}Costs:{/gray-fg}  Gas ${formatCents(tripStats.total_gas_cents)}  +  Other ${formatCents(tripStats.total_other_cents)}  =  {bold}${formatCents(tripStats.totalCost)}{/bold}`);
+      lines.push(`  {gray-fg}Earned:{/gray-fg} {green-fg}${formatCents(tripStats.total_income_cents)}{/green-fg}`);
+      lines.push('');
+
       const netTag = tripStats.netProfit >= 0 ? '{green-fg}' : '{red-fg}';
       const netClose = tripStats.netProfit >= 0 ? '{/green-fg}' : '{/red-fg}';
-      lines.push(`  Net profit: ${netTag}${formatCents(tripStats.netProfit)}${netClose}   Cost/mile: ${formatCents(tripStats.costPerMile)}   Profit/mile: ${formatCents(tripStats.profitPerMile)}`);
-      lines.push(`  IRS mileage deduction (${formatCents(IRS_MILEAGE_RATE_CENTS)}/mi): ${formatCents(tripStats.irsDeduction)}`);
-      const worthIt = tripStats.netProfit > 0;
-      const verdict = worthIt
-        ? '{green-fg}Trips are profitable this month{/green-fg}'
-        : '{red-fg}Trips are costing more than they earn{/red-fg}';
-      lines.push(`  Verdict: ${verdict}`);
+      lines.push(`  ${boxLine('Net Profit:', `${netTag}${formatCents(tripStats.netProfit)}${netClose}`)}`);
+      lines.push(`  ${boxLine('Cost / mile:', formatCents(tripStats.costPerMile))}`);
+      lines.push(`  ${boxLine('Profit / mile:', `${netTag}${formatCents(tripStats.profitPerMile)}${netClose}`)}`);
+      lines.push(`  ${boxLine(`IRS deduction (${formatCents(IRS_MILEAGE_RATE_CENTS)}/mi):`, formatCents(tripStats.irsDeduction))}`);
+      lines.push('');
+      const verdictIcon = tripStats.netProfit > 0 ? '✓' : '✗';
+      const verdictColor = tripStats.netProfit > 0 ? 'green' : 'red';
+      const verdictText = tripStats.netProfit > 0 ? 'Trips are profitable this month' : 'Trips are costing more than they earn';
+      lines.push(`  {${verdictColor}-fg}{bold}${verdictIcon} ${verdictText}{/bold}{/${verdictColor}-fg}`);
     }
 
+    lines.push('');
     view.dashboard.setContent(lines.join('\n'));
   }
 
@@ -699,6 +780,12 @@ async function main() {
     const rows = await db.all(query, params);
     const filtered = rows.filter(matchesFilter);
 
+    let totalIncome = 0, totalExpense = 0;
+    for (const t of filtered) {
+      if (t.type === 'income') totalIncome += t.amount_cents;
+      else totalExpense += t.amount_cents;
+    }
+
     view.tx.setData({
       columns: [
         { title: 'ID', minWidth: 3, maxWidth: 6, weight: 1 },
@@ -708,23 +795,30 @@ async function main() {
         { title: 'Category', minWidth: 10, maxWidth: 18, weight: 2 },
         { title: 'Note', minWidth: 10, maxWidth: 60, weight: 4 }
       ],
-      rows: filtered.map((t) => [
-        String(t.id),
-        t.date,
-        t.type,
-        formatCents(t.amount_cents),
-        t.category,
-        t.note || ''
-      ])
+      rows: filtered.map((t) => {
+        const prefix = t.type === 'expense' ? '-' : '+';
+        return [
+          String(t.id),
+          t.date,
+          t.type === 'expense' ? '{red-fg}expense{/red-fg}' : '{green-fg}income{/green-fg}',
+          t.type === 'expense' ? `{red-fg}${prefix}${formatCents(t.amount_cents)}{/red-fg}` : `{green-fg}${prefix}${formatCents(t.amount_cents)}{/green-fg}`,
+          t.category,
+          `{gray-fg}${t.note || ''}{/gray-fg}`
+        ];
+      })
     });
     if (!filtered.length) {
       view.tx.list.setItems(['  (no transactions — press "a" to add one)']);
     }
+    const net = totalIncome - totalExpense;
+    const netColor = net >= 0 ? '{green-fg}' : '{red-fg}';
+    const netClose = net >= 0 ? '{/green-fg}' : '{/red-fg}';
     const parts = [];
     if (txFilter) parts.push(`search: ${txFilter}`);
     if (txDateFrom || txDateTo) parts.push(`date: ${txDateFrom || '*'} .. ${txDateTo || '*'}`);
+    const summary = `▲ ${formatCents(totalIncome)}  ▼ ${formatCents(totalExpense)}  ◆ ${formatCents(net)}`;
     const filterLabel = parts.length ? parts.join('  ') + ` (${filtered.length}/${rows.length})` : '';
-    setStatus(filterLabel || `Transactions: ${rows.length}`);
+    setStatus((filterLabel || `Transactions: ${rows.length}`) + `  │  ${summary}`);
   }
 
   async function refreshRecurring() {
@@ -750,16 +844,25 @@ async function main() {
         { title: 'Category', minWidth: 10, maxWidth: 18, weight: 2 },
         { title: 'Cadence', minWidth: 7, maxWidth: 8, weight: 1 }
       ],
-      rows: filtered.map((r) => [
-        String(r.id),
-        r.active ? 'yes' : 'no',
-        r.next_due_date,
-        r.name,
-        r.type,
-        formatCents(r.amount_cents),
-        r.category,
-        r.cadence
-      ])
+      rows: filtered.map((r) => {
+        const today = isoDateOnly(new Date());
+        const daysLeft = Math.round((new Date(`${r.next_due_date}T00:00:00`) - new Date(`${today}T00:00:00`)) / 86400000);
+        const activeLabel = r.active ? '{green-fg}✓{/green-fg}' : '{gray-fg}✗{/gray-fg}';
+        const dateColor = !r.active ? 'gray' : daysLeft <= 3 ? 'red' : daysLeft <= 7 ? 'yellow' : 'white';
+        const typeTag = r.type === 'expense' ? '{red-fg}expense{/red-fg}' : '{green-fg}income{/green-fg}';
+        const dim = !r.active ? '{gray-fg}' : '';
+        const dimC = !r.active ? '{/gray-fg}' : '';
+        return [
+          String(r.id),
+          activeLabel,
+          `{${dateColor}-fg}${r.next_due_date}{/${dateColor}-fg}`,
+          `${dim}${r.name}${dimC}`,
+          typeTag,
+          `${dim}${formatCents(r.amount_cents)}${dimC}`,
+          `${dim}${r.category}${dimC}`,
+          `{gray-fg}${r.cadence}{/gray-fg}`
+        ];
+      })
     });
     if (!filtered.length) {
       view.recurring.list.setItems(['  (no recurring items — press "a" to add one)']);
@@ -780,21 +883,25 @@ async function main() {
     view.goals.setData({
       columns: [
         { title: 'ID', minWidth: 3, maxWidth: 6, weight: 1 },
-        { title: 'Name', minWidth: 12, maxWidth: 30, weight: 4 },
-        { title: 'Current', minWidth: 10, maxWidth: 12, weight: 2 },
-        { title: 'Target', minWidth: 10, maxWidth: 12, weight: 2 },
-        { title: '%', minWidth: 3, maxWidth: 4, weight: 1 },
+        { title: 'Name', minWidth: 12, maxWidth: 26, weight: 3 },
+        { title: 'Progress', minWidth: 12, maxWidth: 14, weight: 2 },
+        { title: 'Current', minWidth: 8, maxWidth: 12, weight: 1 },
+        { title: 'Target', minWidth: 8, maxWidth: 12, weight: 1 },
+        { title: '%', minWidth: 4, maxWidth: 5, weight: 1 },
         { title: 'Due', minWidth: 10, maxWidth: 12, weight: 2 }
       ],
       rows: filtered.map((g) => {
         const pct = g.target_cents ? Math.round((g.current_cents / g.target_cents) * 100) : 0;
+        const barColor = pct >= 100 ? 'green' : pct >= 60 ? 'yellow' : 'white';
+        const bar = progressBar(Math.min(pct, 100), 10);
         return [
           String(g.id),
-          g.name,
-          formatCents(g.current_cents),
+          `{bold}${g.name}{/bold}`,
+          `{${barColor}-fg}${bar}{/${barColor}-fg}`,
+          `{green-fg}${formatCents(g.current_cents)}{/green-fg}`,
           formatCents(g.target_cents),
-          `${pct}%`,
-          g.due_date || ''
+          `{${barColor}-fg}${pct}%{/${barColor}-fg}`,
+          g.due_date ? `{gray-fg}${g.due_date}{/gray-fg}` : ''
         ];
       })
     });
@@ -814,29 +921,32 @@ async function main() {
 
     view.budgets.setData({
       columns: [
-        { title: 'ID', minWidth: 3, maxWidth: 6, weight: 1 },
+        { title: 'ID', minWidth: 3, maxWidth: 5, weight: 1 },
         { title: 'Type', minWidth: 6, maxWidth: 8, weight: 1 },
-        { title: 'Category', minWidth: 10, maxWidth: 20, weight: 3 },
-        { title: 'Limit', minWidth: 10, maxWidth: 14, weight: 2 },
-        { title: 'Spent', minWidth: 10, maxWidth: 14, weight: 2 },
-        { title: 'Remaining', minWidth: 10, maxWidth: 14, weight: 2 },
-        { title: 'Status', minWidth: 8, maxWidth: 12, weight: 1 }
+        { title: 'Category', minWidth: 10, maxWidth: 18, weight: 2 },
+        { title: 'Usage', minWidth: 10, maxWidth: 12, weight: 2 },
+        { title: 'Spent', minWidth: 8, maxWidth: 12, weight: 1 },
+        { title: 'Limit', minWidth: 8, maxWidth: 12, weight: 1 },
+        { title: 'Left', minWidth: 8, maxWidth: 12, weight: 1 },
+        { title: 'Status', minWidth: 6, maxWidth: 10, weight: 1 }
       ],
       rows: budgets.map((b) => {
         const spent = spendMap[b.category] || 0;
         const remaining = b.monthly_limit_cents - spent;
         const pct = b.monthly_limit_cents ? Math.round((spent / b.monthly_limit_cents) * 100) : 0;
-        let status = 'OK';
-        if (pct >= 100) status = 'OVER';
-        else if (pct >= 80) status = 'WARN';
+        const barColor = pct >= 100 ? 'red' : pct >= 80 ? 'yellow' : 'green';
+        const bar = progressBar(Math.min(pct, 100), 8);
+        const statusTag = pct >= 100 ? '{red-fg}OVER{/red-fg}' : pct >= 80 ? '{yellow-fg}WARN{/yellow-fg}' : '{green-fg}OK{/green-fg}';
+        const remColor = remaining < 0 ? 'red' : 'green';
         return [
           String(b.id),
           b.type,
-          b.category,
-          formatCents(b.monthly_limit_cents),
+          `{bold}${b.category}{/bold}`,
+          `{${barColor}-fg}${bar}{/${barColor}-fg}`,
           formatCents(spent),
-          formatCents(remaining),
-          `${status} (${pct}%)`
+          formatCents(b.monthly_limit_cents),
+          `{${remColor}-fg}${formatCents(remaining)}{/${remColor}-fg}`,
+          `${statusTag} ${pct}%`
         ];
       })
     });
@@ -857,6 +967,15 @@ async function main() {
       : rows;
 
     const vs = await getVehicleSettings(db);
+    let totMiles = 0, totGas = 0, totOther = 0, totIncome = 0;
+    for (const t of filtered) {
+      totMiles += t.miles;
+      totGas += t.gas_cost_cents;
+      totOther += t.other_cost_cents;
+      totIncome += t.income_cents;
+    }
+    const totNet = totIncome - totGas - totOther;
+
     view.trips.setData({
       columns: [
         { title: 'ID', minWidth: 3, maxWidth: 5, weight: 1 },
@@ -872,25 +991,28 @@ async function main() {
       rows: filtered.map((t) => {
         const totalCost = t.gas_cost_cents + t.other_cost_cents;
         const net = t.income_cents - totalCost;
-        const gasLabel = t.gas_estimated ? `~${formatCents(t.gas_cost_cents)}` : formatCents(t.gas_cost_cents);
+        const netColor = net >= 0 ? 'green' : 'red';
+        const gasLabel = t.gas_estimated ? `{gray-fg}~${formatCents(t.gas_cost_cents)}{/gray-fg}` : `{red-fg}${formatCents(t.gas_cost_cents)}{/red-fg}`;
         return [
           String(t.id),
           t.date,
-          t.destination,
-          t.odometer_start != null ? t.odometer_start.toFixed(0) : '-',
-          t.odometer_end != null ? t.odometer_end.toFixed(0) : '-',
-          t.miles.toFixed(1),
+          `{bold}${t.destination}{/bold}`,
+          t.odometer_start != null ? `{gray-fg}${t.odometer_start.toFixed(0)}{/gray-fg}` : '{gray-fg}-{/gray-fg}',
+          t.odometer_end != null ? `{gray-fg}${t.odometer_end.toFixed(0)}{/gray-fg}` : '{gray-fg}-{/gray-fg}',
+          `{yellow-fg}${t.miles.toFixed(1)}{/yellow-fg}`,
           gasLabel,
-          formatCents(t.income_cents),
-          formatCents(net)
+          `{green-fg}${formatCents(t.income_cents)}{/green-fg}`,
+          `{${netColor}-fg}${formatCents(net)}{/${netColor}-fg}`
         ];
       })
     });
     if (!filtered.length) {
       view.trips.list.setItems(['  (no trips — press "a" to log one)']);
     }
-    const vInfo = vs ? `  |  Vehicle: ${vs.mpg} MPG, gas ${formatCents(vs.gas_price_cents)}/gal  (~${formatCents(IRS_MILEAGE_RATE_CENTS)}/mi IRS rate)  [v: settings]` : '';
-    setStatus((tripsFilter ? `Filter: ${tripsFilter} (${filtered.length}/${rows.length})` : `Trips: ${rows.length}`) + vInfo);
+    const totNetColor = totNet >= 0 ? '✓' : '✗';
+    const tripSummary = filtered.length ? `  │  ${totMiles.toFixed(0)}mi  gas:${formatCents(totGas)}  earned:${formatCents(totIncome)}  net:${formatCents(totNet)} ${totNetColor}` : '';
+    const vInfo = vs ? `  │  ${vs.mpg}MPG ${formatCents(vs.gas_price_cents)}/gal [v:settings]` : '';
+    setStatus((tripsFilter ? `Filter: ${tripsFilter} (${filtered.length}/${rows.length})` : `Trips: ${rows.length}`) + tripSummary + vInfo);
   }
 
   async function refresh() {
@@ -953,13 +1075,14 @@ async function main() {
   screen.key(['h', '?'], () => {
     createMessage({
       screen,
-      title: 'Help',
+      title: ' DimeTrack Help ',
       message:
-        'Navigation: d t r g b m (or Tab / Shift+Tab to cycle)\n' +
-        'Actions: a add, enter edit, del delete/toggle, p post recurring\n' +
-        'Filter: / search (all list views), date range (tx)\n' +
-        'Export: e export current view to CSV\n' +
-        'Quit: q (confirm) or Ctrl+C (immediate)'
+        '◆ Navigation ─ d:Dashboard  t:Transactions  r:Recurring  g:Goals  b:Budgets  m:Trips\n' +
+        '               Tab / Shift+Tab to cycle views\n' +
+        '◆ Actions ──── a:add  enter:edit  del:delete/toggle  p:post recurring  v:vehicle(trips)\n' +
+        '◆ Search ───── /:search text  f:date range (transactions only)\n' +
+        '◆ Export ───── e:export current view to CSV\n' +
+        '◆ Quit ─────── q:confirm quit   Ctrl+C:immediate'
     });
   });
 
@@ -1848,6 +1971,9 @@ async function main() {
   } catch (e) {
     autoPostError = e?.message || String(e);
   }
+
+  // Refresh clock in header every 60s
+  setInterval(() => { updateChrome(); screen.render(); }, 60000);
 
   // Initial view
   showView('dashboard');

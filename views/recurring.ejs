@@ -1,8 +1,37 @@
 <%- include('partials/top', { today }) %>
 
-<div class="rounded-xl bg-slate-900 p-5 border border-slate-800">
+<%
+  const activeItems = rows.filter(r => r.active);
+  const monthlyExpense = activeItems.filter(r => r.type === 'expense' && r.cadence === 'monthly').reduce((s,r) => s + r.amount_cents, 0);
+  const monthlyIncome = activeItems.filter(r => r.type === 'income' && r.cadence === 'monthly').reduce((s,r) => s + r.amount_cents, 0);
+  const weeklyExpense = activeItems.filter(r => r.type === 'expense' && r.cadence === 'weekly').reduce((s,r) => s + r.amount_cents, 0);
+  const weeklyIncome = activeItems.filter(r => r.type === 'income' && r.cadence === 'weekly').reduce((s,r) => s + r.amount_cents, 0);
+%>
+
+<% if (activeItems.length) { %>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Monthly expenses</div>
+    <div class="text-xl font-semibold text-rose-300 mt-1"><%= formatCents(monthlyExpense) %></div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Monthly income</div>
+    <div class="text-xl font-semibold text-emerald-300 mt-1"><%= formatCents(monthlyIncome) %></div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Weekly expenses</div>
+    <div class="text-xl font-semibold text-rose-300 mt-1"><%= formatCents(weeklyExpense) %></div>
+  </div>
+  <div class="rounded-xl bg-slate-900 p-4 border border-slate-800">
+    <div class="text-xs text-slate-400">Weekly income</div>
+    <div class="text-xl font-semibold text-emerald-300 mt-1"><%= formatCents(weeklyIncome) %></div>
+  </div>
+</div>
+<% } %>
+
+<div class="rounded-xl bg-[#000000] p-5 border border-slate-800">
   <div class="font-semibold">Add recurring item</div>
-  <div class="text-xs text-slate-500 mt-1">Rent, subscriptions, paycheck, etc. Use “Post” to add it as a transaction and advance next due date.</div>
+  <div class="text-xs text-slate-500 mt-1">Rent, subscriptions, paycheck, etc. Use "Post" to create a transaction and advance the due date.</div>
 
   <form class="mt-4 grid grid-cols-1 md:grid-cols-8 gap-3" method="POST" action="/recurring">
     <input name="name" placeholder="Name (Rent)" class="md:col-span-2 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" required />
@@ -19,57 +48,90 @@
     <input name="day_of_month" placeholder="DOM (1-31)" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" />
     <input name="day_of_week" placeholder="DOW (0-6)" class="md:col-span-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" />
     <input name="next_due_date" type="date" value="<%= today %>" class="md:col-span-2 px-3 py-2 rounded-lg bg-slate-950 border border-slate-800" />
-    <button class="md:col-span-2 px-3 py-2 rounded-lg bg-emerald-500 text-slate-950 font-semibold hover:bg-emerald-400" type="submit">Add recurring</button>
+    <button class="md:col-span-1 px-3 py-2 rounded-lg bg-emerald-500 text-slate-950 font-semibold hover:bg-emerald-400" type="submit">Add</button>
+    <a class="md:col-span-1 text-center px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 text-sm" href="/export/recurring.csv">Export CSV</a>
   </form>
 
   <div class="text-xs text-slate-500 mt-3">
-    Tip: For monthly items, fill DOM (day of month). For weekly items, fill DOW (0=Sun ... 6=Sat).
+    Tip: For monthly items, fill DOM (day of month). For weekly items, fill DOW (0=Sun … 6=Sat).
   </div>
 </div>
 
 <div class="mt-6 rounded-xl bg-slate-900 p-5 border border-slate-800">
   <div class="flex items-center justify-between">
     <div class="font-semibold">Recurring items</div>
-    <div class="text-xs text-slate-500">Total: <%= rows.length %></div>
+    <div class="flex items-center gap-3">
+      <span class="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-300"><%= activeItems.length %> active</span>
+      <span class="text-xs px-2 py-1 rounded bg-slate-800 text-slate-400"><%= rows.length - activeItems.length %> paused</span>
+    </div>
   </div>
 
-  <div class="mt-4 overflow-x-auto">
-    <table class="min-w-full text-sm">
-      <thead>
-        <tr class="text-left text-slate-400">
-          <th class="py-2 pr-4">Name</th>
-          <th class="py-2 pr-4">Type</th>
-          <th class="py-2 pr-4">Cadence</th>
-          <th class="py-2 pr-4">Next due</th>
-          <th class="py-2 pr-4">Amount</th>
-          <th class="py-2 pr-4">Active</th>
-          <th class="py-2 pr-0"></th>
-        </tr>
-      </thead>
-      <tbody>
-        <% rows.forEach(r => { %>
-          <tr class="border-t border-slate-800">
-            <td class="py-2 pr-4 font-medium"><%= r.name %></td>
-            <td class="py-2 pr-4"><%= r.type %></td>
-            <td class="py-2 pr-4"><%= r.cadence %></td>
-            <td class="py-2 pr-4 whitespace-nowrap"><%= r.next_due_date %></td>
-            <td class="py-2 pr-4 <%= r.type === 'expense' ? 'text-rose-300' : 'text-emerald-300' %>"><%= formatCents(r.amount_cents) %></td>
-            <td class="py-2 pr-4">
-              <span class="px-2 py-1 rounded bg-slate-950 border border-slate-800"><%= r.active ? 'yes' : 'no' %></span>
-            </td>
-            <td class="py-2 pr-0 flex gap-2">
-              <form method="POST" action="/recurring/<%= r.id %>/post">
-                <button class="text-xs px-2 py-1 rounded bg-sky-300 text-slate-950 hover:bg-sky-200" type="submit" <%= r.active ? '' : 'disabled' %>>Post</button>
-              </form>
-              <form method="POST" action="/recurring/<%= r.id %>/toggle">
-                <button class="text-xs px-2 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800" type="submit"><%= r.active ? 'Pause' : 'Resume' %></button>
-              </form>
-            </td>
+  <% if (!rows.length) { %>
+    <div class="text-slate-400 text-sm mt-3">No recurring items yet. Add one above.</div>
+  <% } else { %>
+    <div class="mt-4 overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-400">
+            <th class="py-2 pr-4">Status</th>
+            <th class="py-2 pr-4">Name</th>
+            <th class="py-2 pr-4">Type</th>
+            <th class="py-2 pr-4">Cadence</th>
+            <th class="py-2 pr-4">Next due</th>
+            <th class="py-2 pr-4">Amount</th>
+            <th class="py-2 pr-4">Category</th>
+            <th class="py-2 pr-0"></th>
           </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  </div>
+        </thead>
+        <tbody>
+          <% rows.forEach(r => {
+            const todayDate = new Date(today + 'T00:00:00');
+            const dueDate = new Date(r.next_due_date + 'T00:00:00');
+            const daysLeft = Math.round((dueDate - todayDate) / 86400000);
+            const overdue = r.active && daysLeft < 0;
+            const urgent = r.active && daysLeft >= 0 && daysLeft <= 3;
+            const soon = r.active && daysLeft > 3 && daysLeft <= 7;
+          %>
+            <tr class="border-t border-slate-800 <%= !r.active ? 'opacity-40' : '' %>">
+              <td class="py-2 pr-4">
+                <% if (!r.active) { %>
+                  <span class="text-xs px-2 py-1 rounded bg-slate-800 text-slate-500">paused</span>
+                <% } else if (overdue) { %>
+                  <span class="text-xs px-2 py-1 rounded bg-rose-500/20 text-rose-300 font-semibold">overdue</span>
+                <% } else if (urgent) { %>
+                  <span class="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-300"><%= daysLeft %>d</span>
+                <% } else if (soon) { %>
+                  <span class="text-xs px-2 py-1 rounded bg-sky-500/20 text-sky-300"><%= daysLeft %>d</span>
+                <% } else { %>
+                  <span class="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-300">active</span>
+                <% } %>
+              </td>
+              <td class="py-2 pr-4 font-medium"><%= r.name %></td>
+              <td class="py-2 pr-4">
+                <span class="text-xs px-2 py-1 rounded <%= r.type === 'expense' ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/20 text-emerald-300' %>"><%= r.type %></span>
+              </td>
+              <td class="py-2 pr-4">
+                <span class="text-xs px-2 py-1 rounded bg-slate-950 border border-slate-800"><%= r.cadence %></span>
+              </td>
+              <td class="py-2 pr-4 whitespace-nowrap font-medium <%= overdue ? 'text-rose-300' : urgent ? 'text-amber-300' : soon ? 'text-sky-300' : '' %>"><%= r.next_due_date %></td>
+              <td class="py-2 pr-4 font-semibold <%= r.type === 'expense' ? 'text-rose-300' : 'text-emerald-300' %>"><%= r.type === 'expense' ? '-' : '+' %><%= formatCents(r.amount_cents) %></td>
+              <td class="py-2 pr-4 text-slate-400"><%= r.category %></td>
+              <td class="py-2 pr-0">
+                <div class="flex gap-2">
+                  <form method="POST" action="/recurring/<%= r.id %>/post">
+                    <button class="text-xs px-2 py-1 rounded bg-sky-300 text-slate-950 hover:bg-sky-200 disabled:opacity-30" type="submit" <%= r.active ? '' : 'disabled' %>>Post</button>
+                  </form>
+                  <form method="POST" action="/recurring/<%= r.id %>/toggle">
+                    <button class="text-xs px-2 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800" type="submit"><%= r.active ? 'Pause' : 'Resume' %></button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
 </div>
 
 <%- include('partials/bottom') %>

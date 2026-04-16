@@ -1782,22 +1782,42 @@ async function main() {
   view.recurring.list.key(['delete', 'backspace'], () => {
     const id = selectedIdFromTable(view.recurring);
     if (!id) return;
-    createConfirm({
-      screen,
-      title: 'Toggle Recurring',
-      message: `Toggle active/inactive for recurring #${id}?`,
-      onYes: async () => {
-        try {
-          await db.run(
-            `UPDATE recurring SET active = CASE WHEN active=1 THEN 0 ELSE 1 END WHERE id=?`,
-            [id]
-          );
-          await refreshRecurring();
-        } catch (e) {
-          createMessage({ screen, title: 'Error', message: e?.message || String(e) });
-        }
+    (async () => {
+      try {
+        const r = await db.get(`SELECT * FROM recurring WHERE id=?`, [id]);
+        if (!r) return;
+        createSelectPrompt({
+          screen,
+          title: `${r.name} (${r.active ? 'active' : 'inactive'})`,
+          options: [
+            r.active ? 'Pause (stop auto-posting)' : 'Resume (start auto-posting)',
+            'Delete permanently'
+          ],
+          initialIndex: 0,
+          onSelect: async (choice) => {
+            if (choice.startsWith('Delete')) {
+              createConfirm({
+                screen,
+                title: `Delete "${r.name}"?`,
+                message: `Permanently remove ${r.name} (${formatCents(r.amount_cents)}/${r.cadence})?`,
+                onYes: async () => {
+                  await db.run(`DELETE FROM recurring WHERE id=?`, [id]);
+                  await refreshRecurring();
+                }
+              });
+            } else {
+              await db.run(
+                `UPDATE recurring SET active = CASE WHEN active=1 THEN 0 ELSE 1 END WHERE id=?`,
+                [id]
+              );
+              await refreshRecurring();
+            }
+          }
+        });
+      } catch (e) {
+        createMessage({ screen, title: 'Error', message: e?.message || String(e) });
       }
-    });
+    })();
   });
 
   view.recurring.list.key(['/'], () => {

@@ -2280,14 +2280,68 @@ async function main() {
 
   // CSV Export
   screen.key(['e'], () => {
-    if (currentView === 'dashboard') {
-      createMessage({ screen, title: 'Export', message: 'Export is available from list views (t, r, g, b, m, l).' });
-      return;
-    }
-
     (async () => {
       try {
         let columns, rows, filename;
+
+        if (currentView === 'dashboard') {
+          const today = isoDateOnly(new Date());
+          const { start, end } = monthRange(today);
+          const dash = await computeDashboard(db, today);
+          const budgets = await db.all(`SELECT * FROM budgets ORDER BY type ASC, category ASC`);
+          const spending = await getMonthlySpendByCategory(db, start, end);
+          const spendMap = {};
+          for (const s of spending) spendMap[s.category] = s.spent_cents;
+          const tripStats = await getMonthlyTripSummary(db, start, end);
+          const allocResult = await computeAllocations(db, start, end);
+
+          const csvLines = [];
+          csvLines.push(['Section', 'Item', 'Value'].join(','));
+          csvLines.push(['Month', 'Start', start].join(','));
+          csvLines.push(['Month', 'End', end].join(','));
+          csvLines.push(['Overview', 'Income', formatCents(dash.incomeCents)].join(','));
+          csvLines.push(['Overview', 'Expenses', formatCents(dash.expenseCents)].join(','));
+          csvLines.push(['Overview', 'Net', formatCents(dash.netCents)].join(','));
+          csvLines.push([]);
+
+          for (const g of dash.goals) {
+            const pct = g.target_cents ? Math.round((g.current_cents / g.target_cents) * 100) : 0;
+            csvLines.push(['Goal', g.name, `${formatCents(g.current_cents)} / ${formatCents(g.target_cents)} (${pct}%)`].join(','));
+          }
+          if (dash.goals.length) csvLines.push([]);
+
+          for (const r of dash.upcomingRecurring) {
+            csvLines.push(['Upcoming', `${r.name} (${r.type})`, `${formatCents(r.amount_cents)} due ${r.next_due_date}`].join(','));
+          }
+          if (dash.upcomingRecurring.length) csvLines.push([]);
+
+          for (const b of budgets) {
+            const spent = spendMap[b.category] || 0;
+            const pct = b.monthly_limit_cents ? Math.round((spent / b.monthly_limit_cents) * 100) : 0;
+            csvLines.push(['Budget', b.category, `${formatCents(spent)} / ${formatCents(b.monthly_limit_cents)} (${pct}%)`].join(','));
+          }
+          if (budgets.length) csvLines.push([]);
+
+          if (tripStats.trip_count > 0) {
+            csvLines.push(['Trips', 'Count', tripStats.trip_count].join(','));
+            csvLines.push(['Trips', 'Miles', tripStats.total_miles.toFixed(1)].join(','));
+            csvLines.push(['Trips', 'Gas cost', formatCents(tripStats.total_gas_cents)].join(','));
+            csvLines.push(['Trips', 'Income', formatCents(tripStats.total_income_cents)].join(','));
+            csvLines.push(['Trips', 'Net profit', formatCents(tripStats.netProfit)].join(','));
+            csvLines.push([]);
+          }
+
+          for (const a of allocResult.items) {
+            const rule = a.alloc_type === 'fixed' ? formatCents(a.amount_cents) : `${a.percent}%`;
+            csvLines.push(['Allocation', a.name, `${rule} — ${a.status} (${formatCents(a.funded)} / ${formatCents(a.needed)})`].join(','));
+          }
+
+          const csv = csvLines.join('\n') + '\n';
+          const outPath = path.join(__dirname, 'dashboard.csv');
+          fs.writeFileSync(outPath, csv, 'utf8');
+          createMessage({ screen, title: 'Exported', message: `Dashboard summary written to ${outPath}` });
+          return;
+        }
 
         if (currentView === 'tx') {
           let query = `SELECT * FROM transactions`;

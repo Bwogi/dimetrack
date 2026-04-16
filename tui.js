@@ -1214,11 +1214,11 @@ async function main() {
 
     view.allocations.setData({
       columns: [
-        { title: 'ID', minWidth: 3, maxWidth: 5, weight: 1 },
-        { title: 'Name', minWidth: 14, maxWidth: 30, weight: 3 },
-        { title: 'Need', minWidth: 10, maxWidth: 14, weight: 2 },
-        { title: 'Got so far', minWidth: 14, maxWidth: 22, weight: 3 },
-        { title: 'Status', minWidth: 10, maxWidth: 14, weight: 2 }
+        { title: 'ID', minWidth: 3, maxWidth: 4, weight: 1 },
+        { title: 'Name', minWidth: 12, maxWidth: 26, weight: 3 },
+        { title: 'Need', minWidth: 9, maxWidth: 12, weight: 2 },
+        { title: 'Got so far', minWidth: 12, maxWidth: 20, weight: 2 },
+        { title: 'Status', minWidth: 16, maxWidth: 24, weight: 3 }
       ],
       rows: items.map((a) => {
         const dim = !a.active ? '{gray-fg}' : '';

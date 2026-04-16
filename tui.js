@@ -1198,23 +1198,38 @@ async function main() {
       columns: [
         { title: 'ID', minWidth: 3, maxWidth: 5, weight: 1 },
         { title: 'Name', minWidth: 14, maxWidth: 30, weight: 3 },
-        { title: 'Monthly $', minWidth: 9, maxWidth: 12, weight: 1 },
-        { title: 'Got', minWidth: 12, maxWidth: 18, weight: 2 },
-        { title: '', minWidth: 8, maxWidth: 12, weight: 1 }
+        { title: 'Need', minWidth: 10, maxWidth: 14, weight: 2 },
+        { title: 'Got so far', minWidth: 14, maxWidth: 22, weight: 3 },
+        { title: 'Status', minWidth: 10, maxWidth: 14, weight: 2 }
       ],
       rows: items.map((a) => {
         const dim = !a.active ? '{gray-fg}' : '';
         const dimC = !a.active ? '{/gray-fg}' : '';
-        const color = a.status === 'funded' ? 'green' : a.status === 'partial' ? 'yellow' : a.status === 'unfunded' ? 'red' : 'gray';
-        const icon = a.status === 'funded' ? '✓ Good' : a.status === 'partial' ? '⚠ Short' : a.status === 'unfunded' ? '✗ Empty' : '○ Off';
-        const bar = progressBar(Math.min(a.pct, 100), 8);
         const label = a.alloc_type === 'percent' ? `${a.percent}% = ${formatCents(a.needed)}` : formatCents(a.needed);
+
+        let gotCell, statusCell;
+        if (!a.active) {
+          gotCell = '{gray-fg}—{/gray-fg}';
+          statusCell = '{gray-fg}○ Off{/gray-fg}';
+        } else if (a.status === 'funded') {
+          const bar = progressBar(100, 10);
+          gotCell = `{green-fg}${bar}{/green-fg} {green-fg}{bold}${formatCents(a.funded)}{/bold}{/green-fg}`;
+          statusCell = '{green-fg}{bold}✓ Good{/bold}{/green-fg}';
+        } else if (a.status === 'partial') {
+          const bar = progressBar(a.pct, 10);
+          gotCell = `{yellow-fg}${bar}{/yellow-fg} {yellow-fg}${formatCents(a.funded)}{/yellow-fg}`;
+          statusCell = `{yellow-fg}{bold}⚠ ${formatCents(a.shortfall)} short{/bold}{/yellow-fg}`;
+        } else {
+          gotCell = '{white-fg}$0.00{/white-fg}';
+          statusCell = `{white-fg}{bold}✗ Need ${formatCents(a.needed)}{/bold}{/white-fg}`;
+        }
+
         return [
           String(a.id),
           `${dim}{bold}${a.name}{/bold}${dimC}`,
           `${dim}${label}${dimC}`,
-          `{${color}-fg}${bar}{/${color}-fg} ${formatCents(a.funded)}`,
-          `{${color}-fg}${icon}{/${color}-fg}`
+          gotCell,
+          statusCell
         ];
       })
     });

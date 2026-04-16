@@ -68,6 +68,44 @@ function monthRange(isoDate) {
   return { start: isoDateOnly(start), end: isoDateOnly(end) };
 }
 
+// ── Cross-view sync helpers ──────────────────────────────────
+
+async function syncTripTransactions(db, tripId, { destination, date, incomeCents, gasCents, otherCents }) {
+  const tag = `[trip#${tripId}]`;
+
+  // Remove old linked transactions for this trip
+  await db.run(`DELETE FROM transactions WHERE note LIKE ?`, [`%${tag}%`]);
+
+  // Create income transaction if > 0
+  if (incomeCents > 0) {
+    await db.run(
+      `INSERT INTO transactions (date, type, amount_cents, category, note) VALUES (?, 'income', ?, ?, ?)`,
+      [date, incomeCents, 'trip-income', `${destination} ${tag}`]
+    );
+  }
+
+  // Create gas expense transaction if > 0
+  if (gasCents > 0) {
+    await db.run(
+      `INSERT INTO transactions (date, type, amount_cents, category, note) VALUES (?, 'expense', ?, ?, ?)`,
+      [date, gasCents, 'gas', `Gas: ${destination} ${tag}`]
+    );
+  }
+
+  // Create other costs transaction if > 0
+  if (otherCents > 0) {
+    await db.run(
+      `INSERT INTO transactions (date, type, amount_cents, category, note) VALUES (?, 'expense', ?, ?, ?)`,
+      [date, otherCents, 'trip-expense', `Other: ${destination} ${tag}`]
+    );
+  }
+}
+
+async function deleteTripTransactions(db, tripId) {
+  const tag = `[trip#${tripId}]`;
+  await db.run(`DELETE FROM transactions WHERE note LIKE ?`, [`%${tag}%`]);
+}
+
 async function computeDashboard(db, todayIso) {
   const { start, end } = monthRange(todayIso);
 
@@ -2114,10 +2152,13 @@ async function main() {
 
             const note = String(v.note || '').trim() || null;
 
-            await db.run(
+            const stmt = await db.run(
               `INSERT INTO trips (destination, date, odometer_start, odometer_end, miles, gas_cost_cents, gas_estimated, other_cost_cents, income_cents, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [destination, date, odoStart, odoEnd, miles, gasCents, gasEstimated, otherCents, incomeCents, note]
             );
+            // Sync trip → transactions
+            const newTripId = stmt.lastID ?? (await db.get(`SELECT last_insert_rowid() as id`))?.id;
+            await syncTripTransactions(db, newTripId, { destination, date, incomeCents, gasCents, otherCents });
             await refreshTrips();
           } catch (e) {
             createMessage({ screen, title: 'Invalid', message: e?.message || String(e) });
@@ -2187,6 +2228,8 @@ async function main() {
                 `UPDATE trips SET destination=?, date=?, odometer_start=?, odometer_end=?, miles=?, gas_cost_cents=?, gas_estimated=?, other_cost_cents=?, income_cents=?, note=? WHERE id=?`,
                 [destination, date, odoStart, odoEnd, miles, gasCents, gasEstimated, otherCents, incomeCents, note, id]
               );
+              // Sync trip → transactions
+              await syncTripTransactions(db, id, { destination, date, incomeCents, gasCents, otherCents });
               await refreshTrips();
               selectRowById(view.trips, id);
               screen.render();
@@ -2210,6 +2253,7 @@ async function main() {
       message: `Delete trip #${id}?`,
       onYes: async () => {
         try {
+          await deleteTripTransactions(db, id);
           await db.run(`DELETE FROM trips WHERE id = ?`, [id]);
           await refreshTrips();
         } catch (e) {

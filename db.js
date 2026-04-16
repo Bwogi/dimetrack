@@ -136,6 +136,7 @@ export async function initDb() {
       ['income', 'freelance', 20],
       ['income', 'interest', 30],
       ['income', 'refund', 40],
+      ['income', 'trip-income', 50],
       ['income', 'other', 999],
       ['expense', 'rent', 10],
       ['expense', 'utilities', 20],
@@ -148,6 +149,7 @@ export async function initDb() {
       ['expense', 'medical', 90],
       ['expense', 'travel', 100],
       ['expense', 'shopping', 110],
+      ['expense', 'trip-expense', 115],
       ['expense', 'other', 999]
     ];
     for (const [type, name, sortOrder] of defaults) {
@@ -157,6 +159,10 @@ export async function initDb() {
       );
     }
   }
+
+  // Ensure trip-related categories exist (for existing databases)
+  await db.run(`INSERT OR IGNORE INTO categories (type, name, sort_order, active) VALUES ('income', 'trip-income', 50, 1)`);
+  await db.run(`INSERT OR IGNORE INTO categories (type, name, sort_order, active) VALUES ('expense', 'trip-expense', 115, 1)`);
 }
 
 export function parseAmountToCents(amountStr) {

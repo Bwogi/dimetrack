@@ -336,6 +336,31 @@ function createTableView({ parent, label }) {
     }
   });
 
+  let summaryHeight = 0;
+
+  const summaryBox = blessed.box({
+    parent: box,
+    top: 0,
+    left: 1,
+    height: 0,
+    width: '100%-2',
+    tags: true,
+    style: { bg: THEME.bg, fg: THEME.fg },
+    content: ''
+  });
+
+  const divider = blessed.box({
+    parent: box,
+    top: 0,
+    left: 1,
+    height: 1,
+    width: '100%-2',
+    tags: true,
+    hidden: true,
+    style: { bg: THEME.bg, fg: THEME.border },
+    content: ''
+  });
+
   const header = blessed.box({
     parent: box,
     top: 0,
@@ -427,13 +452,41 @@ function createTableView({ parent, label }) {
     box.screen.render();
   });
 
+  const repositionElements = () => {
+    summaryBox.top = 0;
+    summaryBox.height = summaryHeight;
+    if (summaryHeight > 0) {
+      divider.top = summaryHeight;
+      divider.hidden = false;
+      const innerW = Math.max(10, box.width - 4);
+      divider.setContent(`{gray-fg}${'─'.repeat(innerW)}{/gray-fg}`);
+      header.top = summaryHeight + 1;
+      list.top = summaryHeight + 2;
+    } else {
+      divider.hidden = true;
+      header.top = 0;
+      list.top = 1;
+    }
+  };
+
   return {
     box,
     list,
     setData: ({ columns, rows }) => {
       state.columns = columns;
       state.rows = rows;
+      repositionElements();
       refresh();
+    },
+    setSummary: (lines) => {
+      if (!lines || !lines.length) {
+        summaryHeight = 0;
+        summaryBox.setContent('');
+      } else {
+        summaryHeight = lines.length;
+        summaryBox.setContent(lines.join('\n'));
+      }
+      repositionElements();
     }
   };
 }
@@ -811,8 +864,20 @@ async function main() {
       view.tx.list.setItems(['  (no transactions — press "a" to add one)']);
     }
     const net = totalIncome - totalExpense;
-    const netColor = net >= 0 ? '{green-fg}' : '{red-fg}';
-    const netClose = net >= 0 ? '{/green-fg}' : '{/red-fg}';
+
+    if (filtered.length) {
+      const maxAmt = Math.max(totalIncome, totalExpense, 1);
+      const netColor = net >= 0 ? 'green' : 'red';
+      const netIcon = net >= 0 ? '◆' : '◇';
+      view.tx.setSummary([
+        `  {green-fg}▲ Income {/green-fg} ${formatCents(totalIncome).padStart(10)}  {green-fg}${sparkBar(totalIncome, maxAmt, 12)}{/green-fg}` +
+        `    {red-fg}▼ Expense{/red-fg} ${formatCents(totalExpense).padStart(10)}  {red-fg}${sparkBar(totalExpense, maxAmt, 12)}{/red-fg}` +
+        `    {${netColor}-fg}${netIcon} Net    {/${netColor}-fg} ${formatCents(net).padStart(10)}`
+      ]);
+    } else {
+      view.tx.setSummary([]);
+    }
+
     const parts = [];
     if (txFilter) parts.push(`search: ${txFilter}`);
     if (txDateFrom || txDateTo) parts.push(`date: ${txDateFrom || '*'} .. ${txDateTo || '*'}`);
@@ -867,6 +932,31 @@ async function main() {
     if (!filtered.length) {
       view.recurring.list.setItems(['  (no recurring items — press "a" to add one)']);
     }
+
+    const today = isoDateOnly(new Date());
+    const active = rows.filter(r => r.active);
+    const paused = rows.length - active.length;
+    const overdueCount = active.filter(r => {
+      const dl = Math.round((new Date(`${r.next_due_date}T00:00:00`) - new Date(`${today}T00:00:00`)) / 86400000);
+      return dl < 0;
+    }).length;
+    const moExp = active.filter(r => r.type === 'expense' && r.cadence === 'monthly').reduce((s,r) => s + r.amount_cents, 0);
+    const moInc = active.filter(r => r.type === 'income' && r.cadence === 'monthly').reduce((s,r) => s + r.amount_cents, 0);
+    const wkExp = active.filter(r => r.type === 'expense' && r.cadence === 'weekly').reduce((s,r) => s + r.amount_cents, 0);
+    const wkInc = active.filter(r => r.type === 'income' && r.cadence === 'weekly').reduce((s,r) => s + r.amount_cents, 0);
+
+    const summaryLines = [];
+    summaryLines.push(
+      `  {green-fg}${active.length} active{/green-fg}` +
+      (paused ? `  {gray-fg}${paused} paused{/gray-fg}` : '') +
+      (overdueCount ? `  {red-fg}${overdueCount} overdue{/red-fg}` : '')
+    );
+    summaryLines.push(
+      `  Monthly: {red-fg}▼${formatCents(moExp)}{/red-fg}  {green-fg}▲${formatCents(moInc)}{/green-fg}` +
+      `   Weekly: {red-fg}▼${formatCents(wkExp)}{/red-fg}  {green-fg}▲${formatCents(wkInc)}{/green-fg}`
+    );
+    view.recurring.setSummary(rows.length ? summaryLines : []);
+
     setStatus(recurringFilter ? `Filter: ${recurringFilter} (${filtered.length}/${rows.length})` : `Recurring: ${rows.length}`);
   }
 
@@ -908,6 +998,28 @@ async function main() {
     if (!filtered.length) {
       view.goals.list.setItems(['  (no goals — press "a" to add one)']);
     }
+
+    const completedGoals = rows.filter(g => g.target_cents && g.current_cents >= g.target_cents).length;
+    const activeGoals = rows.length - completedGoals;
+    const totalTarget = rows.reduce((s,g) => s + g.target_cents, 0);
+    const totalCurrent = rows.reduce((s,g) => s + g.current_cents, 0);
+    const overallPct = totalTarget ? Math.round((totalCurrent / totalTarget) * 100) : 0;
+    const overallBarColor = overallPct >= 100 ? 'green' : overallPct >= 60 ? 'yellow' : 'white';
+    const overallBar = progressBar(Math.min(overallPct, 100), 20);
+    const remaining = Math.max(0, totalTarget - totalCurrent);
+
+    const summaryLines = [];
+    summaryLines.push(
+      `  Goals: {bold}${rows.length}{/bold}` +
+      `  {green-fg}✓ ${completedGoals} done{/green-fg}` +
+      `  {cyan-fg}${activeGoals} active{/cyan-fg}` +
+      `   Saved: {green-fg}${formatCents(totalCurrent)}{/green-fg} / ${formatCents(totalTarget)}  ({gray-fg}${formatCents(remaining)} left{/gray-fg})`
+    );
+    summaryLines.push(
+      `  Overall: {${overallBarColor}-fg}${overallBar}{/${overallBarColor}-fg} ${overallPct}%`
+    );
+    view.goals.setSummary(rows.length ? summaryLines : []);
+
     setStatus(goalsFilter ? `Filter: ${goalsFilter} (${filtered.length}/${rows.length})` : `Goals: ${rows.length}`);
   }
 
@@ -953,6 +1065,39 @@ async function main() {
     if (!budgets.length) {
       view.budgets.list.setItems(['  (no budgets — press "a" to set one)']);
     }
+
+    if (budgets.length) {
+      const totalLimit = budgets.reduce((s,b) => s + b.monthly_limit_cents, 0);
+      const totalSpent = budgets.reduce((s,b) => s + (spendMap[b.category] || 0), 0);
+      const totalRem = totalLimit - totalSpent;
+      const overallPct = totalLimit ? Math.round((totalSpent / totalLimit) * 100) : 0;
+      const overallColor = overallPct >= 100 ? 'red' : overallPct >= 80 ? 'yellow' : 'green';
+      const overallBarStr = progressBar(Math.min(overallPct, 100), 20);
+      const overCount = budgets.filter(b => {
+        const sp = spendMap[b.category] || 0;
+        return b.monthly_limit_cents && Math.round((sp / b.monthly_limit_cents) * 100) >= 100;
+      }).length;
+      const warnCount = budgets.filter(b => {
+        const sp = spendMap[b.category] || 0;
+        const p = b.monthly_limit_cents ? Math.round((sp / b.monthly_limit_cents) * 100) : 0;
+        return p >= 80 && p < 100;
+      }).length;
+      const okCount = budgets.length - overCount - warnCount;
+      const remColor = totalRem < 0 ? 'red' : 'green';
+
+      view.budgets.setSummary([
+        `  Budgeted: {bold}${formatCents(totalLimit)}{/bold}` +
+        `   Spent: {${overallColor}-fg}${formatCents(totalSpent)}{/${overallColor}-fg}` +
+        `   Left: {${remColor}-fg}${formatCents(totalRem)}{/${remColor}-fg}` +
+        `   │  {green-fg}${okCount} OK{/green-fg}` +
+        (warnCount ? `  {yellow-fg}${warnCount} WARN{/yellow-fg}` : '') +
+        (overCount ? `  {red-fg}${overCount} OVER{/red-fg}` : ''),
+        `  Overall: {${overallColor}-fg}${overallBarStr}{/${overallColor}-fg} ${overallPct}%  {gray-fg}(${start} .. ${end}){/gray-fg}`
+      ]);
+    } else {
+      view.budgets.setSummary([]);
+    }
+
     setStatus(`Budgets: ${budgets.length} (${start} .. ${end})`);
   }
 
@@ -1009,10 +1154,33 @@ async function main() {
     if (!filtered.length) {
       view.trips.list.setItems(['  (no trips — press "a" to log one)']);
     }
-    const totNetColor = totNet >= 0 ? '✓' : '✗';
-    const tripSummary = filtered.length ? `  │  ${totMiles.toFixed(0)}mi  gas:${formatCents(totGas)}  earned:${formatCents(totIncome)}  net:${formatCents(totNet)} ${totNetColor}` : '';
+
+    if (filtered.length) {
+      const totCost = totGas + totOther;
+      const cpm = totMiles > 0 ? Math.round(totCost / totMiles) : 0;
+      const ppm = totMiles > 0 ? Math.round(totNet / totMiles) : 0;
+      const irs = Math.round(totMiles * IRS_MILEAGE_RATE_CENTS);
+      const netColor = totNet >= 0 ? 'green' : 'red';
+      const verdictIcon = totNet > 0 ? '✓' : '✗';
+      const verdictText = totNet > 0 ? 'Profitable' : 'Costing more than earned';
+
+      view.trips.setSummary([
+        `  Trips: {bold}${filtered.length}{/bold}` +
+        `   Miles: {yellow-fg}${totMiles.toFixed(1)}{/yellow-fg}` +
+        `   Cost: {red-fg}${formatCents(totCost)}{/red-fg} (gas ${formatCents(totGas)} + other ${formatCents(totOther)})` +
+        `   Earned: {green-fg}${formatCents(totIncome)}{/green-fg}`,
+        `  Net: {${netColor}-fg}{bold}${formatCents(totNet)}{/bold}{/${netColor}-fg}` +
+        `   Cost/mi: ${formatCents(cpm)}` +
+        `   Profit/mi: {${netColor}-fg}${formatCents(ppm)}{/${netColor}-fg}` +
+        `   IRS: {cyan-fg}${formatCents(irs)}{/cyan-fg} (${formatCents(IRS_MILEAGE_RATE_CENTS)}/mi)` +
+        `   {${netColor}-fg}${verdictIcon} ${verdictText}{/${netColor}-fg}`
+      ]);
+    } else {
+      view.trips.setSummary([]);
+    }
+
     const vInfo = vs ? `  │  ${vs.mpg}MPG ${formatCents(vs.gas_price_cents)}/gal [v:settings]` : '';
-    setStatus((tripsFilter ? `Filter: ${tripsFilter} (${filtered.length}/${rows.length})` : `Trips: ${rows.length}`) + tripSummary + vInfo);
+    setStatus((tripsFilter ? `Filter: ${tripsFilter} (${filtered.length}/${rows.length})` : `Trips: ${rows.length}`) + vInfo);
   }
 
   async function refresh() {

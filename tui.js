@@ -1635,6 +1635,21 @@ async function main() {
                       [name, type, amountCents, category, cadence, dow, dom, nextDue]
                     );
 
+                    // Auto-create a matching allocation for new recurring expenses
+                    if (type === 'expense') {
+                      const exists = await db.get(
+                        `SELECT id FROM allocations WHERE LOWER(name) = LOWER(?)`, [name]
+                      );
+                      if (!exists) {
+                        const monthlyCents = cadence === 'weekly' ? Math.round(amountCents * 4.33) : amountCents;
+                        const maxPri = await db.get(`SELECT COALESCE(MAX(priority),0) as m FROM allocations`);
+                        await db.run(
+                          `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES (?, 'fixed', ?, 0, ?)`,
+                          [name, monthlyCents, (maxPri?.m || 0) + 10]
+                        );
+                      }
+                    }
+
                     await refreshRecurring();
                   } catch (e) {
                     createMessage({ screen, title: 'Invalid', message: e?.message || String(e) });
@@ -1754,10 +1769,30 @@ async function main() {
                           }
                         }
 
+                        const oldName = item.name;
                         await db.run(
                           `UPDATE recurring SET name=?, type=?, amount_cents=?, category=?, cadence=?, day_of_week=?, day_of_month=?, next_due_date=? WHERE id=?`,
                           [name, type, amountCents, category, cadence, dow, dom, nextDue, id]
                         );
+
+                        // Keep allocation in sync with recurring
+                        if (type === 'expense') {
+                          const monthlyCents = cadence === 'weekly' ? Math.round(amountCents * 4.33) : amountCents;
+                          const alloc = await db.get(`SELECT id FROM allocations WHERE LOWER(name) = LOWER(?)`, [oldName]);
+                          if (alloc) {
+                            await db.run(`UPDATE allocations SET name=?, amount_cents=? WHERE id=?`, [name, monthlyCents, alloc.id]);
+                          } else {
+                            const maxPri = await db.get(`SELECT COALESCE(MAX(priority),0) as m FROM allocations`);
+                            await db.run(
+                              `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES (?, 'fixed', ?, 0, ?)`,
+                              [name, monthlyCents, (maxPri?.m || 0) + 10]
+                            );
+                          }
+                        } else {
+                          // Changed to income — remove allocation if it existed
+                          await db.run(`DELETE FROM allocations WHERE LOWER(name) = LOWER(?)`, [oldName]);
+                        }
+
                         await refreshRecurring();
                         selectRowById(view.recurring, id);
                         screen.render();
@@ -1802,6 +1837,8 @@ async function main() {
                 message: `Permanently remove ${r.name} (${formatCents(r.amount_cents)}/${r.cadence})?`,
                 onYes: async () => {
                   await db.run(`DELETE FROM recurring WHERE id=?`, [id]);
+                  // Also remove the matching allocation
+                  await db.run(`DELETE FROM allocations WHERE LOWER(name) = LOWER(?)`, [r.name]);
                   await refreshRecurring();
                 }
               });

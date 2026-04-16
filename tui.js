@@ -6,6 +6,7 @@ import {
   addDays,
   addMonths,
   autoPostOverdueRecurring,
+  computeAllocations,
   estimateGasCost,
   exportToCsv,
   formatCents,
@@ -610,6 +611,7 @@ async function main() {
     { key: 'g', name: 'Goals', view: 'goals' },
     { key: 'b', name: 'Budgets', view: 'budgets' },
     { key: 'm', name: 'Trips', view: 'trips' },
+    { key: 'l', name: 'Allocate', view: 'allocations' },
     { key: 'h', name: 'Help', view: null }
   ];
 
@@ -619,7 +621,8 @@ async function main() {
     recurring: 'a:add  enter:edit  del:toggle  p:post  /:search  e:export  Tab:cycle  q:quit',
     goals:     'a:add  enter:edit(+$)  del:delete  /:search  e:export  Tab:cycle  q:quit',
     budgets:   'a:add  enter:edit  del:delete  /:search  e:export  Tab:cycle  q:quit',
-    trips:     'a:add  enter:edit  del:delete  v:vehicle  /:search  e:export  Tab:cycle  q:quit'
+    trips:     'a:add  enter:edit  del:delete  v:vehicle  /:search  e:export  Tab:cycle  q:quit',
+    allocations:'a:add  enter:edit  del:toggle  ↑↓:priority  e:export  Tab:cycle  q:quit'
   };
 
   function updateChrome() {
@@ -681,7 +684,8 @@ async function main() {
     recurring: createTableView({ parent: mainBox, label: 'Recurring' }),
     goals: createTableView({ parent: mainBox, label: 'Goals' }),
     budgets: createTableView({ parent: mainBox, label: 'Budgets' }),
-    trips: createTableView({ parent: mainBox, label: 'Trips & Mileage' })
+    trips: createTableView({ parent: mainBox, label: 'Trips & Mileage' }),
+    allocations: createTableView({ parent: mainBox, label: 'Income Allocation' })
   };
 
   function showView(name) {
@@ -694,7 +698,7 @@ async function main() {
       }
     }
 
-    if (name === 'tx' || name === 'recurring' || name === 'goals' || name === 'budgets' || name === 'trips') {
+    if (name === 'tx' || name === 'recurring' || name === 'goals' || name === 'budgets' || name === 'trips' || name === 'allocations') {
       view[name].list.focus();
     } else {
       view.dashboard.focus();
@@ -1183,6 +1187,71 @@ async function main() {
     setStatus((tripsFilter ? `Filter: ${tripsFilter} (${filtered.length}/${rows.length})` : `Trips: ${rows.length}`) + vInfo);
   }
 
+  async function refreshAllocations() {
+    const today = isoDateOnly(new Date());
+    const { start, end } = monthRange(today);
+    const result = await computeAllocations(db, start, end);
+    const { totalIncome, allocated, unallocated, items } = result;
+
+    view.allocations.setData({
+      columns: [
+        { title: 'ID', minWidth: 3, maxWidth: 5, weight: 1 },
+        { title: 'Pri', minWidth: 3, maxWidth: 4, weight: 1 },
+        { title: 'Name', minWidth: 12, maxWidth: 26, weight: 3 },
+        { title: 'Rule', minWidth: 10, maxWidth: 14, weight: 2 },
+        { title: 'Needed', minWidth: 8, maxWidth: 12, weight: 1 },
+        { title: 'Funded', minWidth: 10, maxWidth: 14, weight: 2 },
+        { title: 'Status', minWidth: 8, maxWidth: 14, weight: 1 }
+      ],
+      rows: items.map((a) => {
+        const rule = a.alloc_type === 'fixed' ? formatCents(a.amount_cents) : `${a.percent}%`;
+        const fundedBar = progressBar(Math.min(a.pct, 100), 8);
+        const dim = !a.active ? '{gray-fg}' : '';
+        const dimC = !a.active ? '{/gray-fg}' : '';
+        const statusColor = a.status === 'funded' ? 'green' : a.status === 'partial' ? 'yellow' : a.status === 'unfunded' ? 'red' : 'gray';
+        const statusIcon = a.status === 'funded' ? '✓' : a.status === 'partial' ? '⚠' : a.status === 'unfunded' ? '✗' : '○';
+        const statusLabel = a.status === 'funded' ? 'FUNDED' : a.status === 'partial' ? 'PARTIAL' : a.status === 'unfunded' ? 'EMPTY' : 'OFF';
+        return [
+          String(a.id),
+          `{gray-fg}${a.priority}{/gray-fg}`,
+          `${dim}{bold}${a.name}{/bold}${dimC}`,
+          `${dim}${a.alloc_type === 'fixed' ? 'fixed' : 'pct'}  ${rule}${dimC}`,
+          `${dim}${formatCents(a.needed)}${dimC}`,
+          `{${statusColor}-fg}${fundedBar}{/${statusColor}-fg} ${formatCents(a.funded)}`,
+          `{${statusColor}-fg}${statusIcon} ${statusLabel}{/${statusColor}-fg}`
+        ];
+      })
+    });
+    if (!items.length) {
+      view.allocations.list.setItems(['  (no allocations — press "a" to add one)']);
+    }
+
+    const allocPct = totalIncome > 0 ? Math.round((allocated / totalIncome) * 100) : 0;
+    const allocBar = progressBar(Math.min(allocPct, 100), 20);
+    const allocColor = allocPct > 100 ? 'red' : allocPct >= 90 ? 'green' : 'yellow';
+    const fundedCount = items.filter(a => a.status === 'funded').length;
+    const partialCount = items.filter(a => a.status === 'partial').length;
+    const unfundedCount = items.filter(a => a.status === 'unfunded').length;
+    const offCount = items.filter(a => a.status === 'off').length;
+
+    if (items.length) {
+      view.allocations.setSummary([
+        `  Income: {green-fg}{bold}${formatCents(totalIncome)}{/bold}{/green-fg}` +
+        `   Allocated: {${allocColor}-fg}${formatCents(allocated)}{/${allocColor}-fg} (${allocPct}%)` +
+        `   Unallocated: ${unallocated >= 0 ? `{cyan-fg}${formatCents(unallocated)}{/cyan-fg}` : `{red-fg}${formatCents(unallocated)}{/red-fg}`}` +
+        `   │  {green-fg}${fundedCount}✓{/green-fg}` +
+        (partialCount ? ` {yellow-fg}${partialCount}⚠{/yellow-fg}` : '') +
+        (unfundedCount ? ` {red-fg}${unfundedCount}✗{/red-fg}` : '') +
+        (offCount ? ` {gray-fg}${offCount}○{/gray-fg}` : ''),
+        `  ${items.length} envelopes  {${allocColor}-fg}${allocBar}{/${allocColor}-fg}  {gray-fg}(${start} .. ${end}){/gray-fg}`
+      ]);
+    } else {
+      view.allocations.setSummary([]);
+    }
+
+    setStatus(`Allocations: ${items.length}  │  Income: ${formatCents(totalIncome)}  Allocated: ${formatCents(allocated)}  Free: ${formatCents(unallocated)}`);
+  }
+
   async function refresh() {
     try {
       if (currentView === 'dashboard') await refreshDashboard();
@@ -1191,6 +1260,7 @@ async function main() {
       if (currentView === 'goals') await refreshGoals();
       if (currentView === 'budgets') await refreshBudgets();
       if (currentView === 'trips') await refreshTrips();
+      if (currentView === 'allocations') await refreshAllocations();
       screen.render();
     } catch (e) {
       createMessage({ screen, title: 'Error', message: e?.message || String(e) });
@@ -1229,8 +1299,9 @@ async function main() {
   screen.key(['g'], () => showView('goals'));
   screen.key(['b'], () => showView('budgets'));
   screen.key(['m'], () => showView('trips'));
+  screen.key(['l'], () => showView('allocations'));
 
-  const viewOrder = ['dashboard', 'tx', 'recurring', 'goals', 'budgets', 'trips'];
+  const viewOrder = ['dashboard', 'tx', 'recurring', 'goals', 'budgets', 'trips', 'allocations'];
   screen.key(['tab'], () => {
     const idx = viewOrder.indexOf(currentView);
     showView(viewOrder[(idx + 1) % viewOrder.length]);
@@ -1248,7 +1319,7 @@ async function main() {
         '{bold}◆ Navigation{/bold}\n' +
         '  d  Dashboard        t  Transactions     r  Recurring\n' +
         '  g  Goals            b  Budgets          m  Trips & Mileage\n' +
-        '  Tab / Shift+Tab     Cycle through views\n' +
+        '  l  Allocate         Tab / Shift+Tab     Cycle through views\n' +
         '\n' +
         '{bold}◆ Actions (all list views){/bold}\n' +
         '  a      Add new item            enter  Edit selected item\n' +
@@ -1267,6 +1338,7 @@ async function main() {
         '  Goals         Progress bars, saved/target, overall completion %\n' +
         '  Budgets       Usage bars, OVER/WARN/OK badges, overall spending summary\n' +
         '  Trips         Profitability, cost/mi, IRS deduction @ $0.70/mi\n' +
+        '  Allocate      Envelope-style income allocation, priority funding, status\n' +
         '\n' +
         '{bold}◆ Quit{/bold}\n' +
         '  q  Confirm quit     Ctrl+C  Immediate exit'
@@ -2072,10 +2144,135 @@ async function main() {
     });
   });
 
+  // Allocations actions
+  view.allocations.list.key(['a'], () => {
+    createSelectPrompt({
+      screen,
+      title: 'Allocation Type',
+      options: ['fixed', 'percent'],
+      initialIndex: 0,
+      onSelect: (allocType) => {
+        const fields = [
+          { name: 'name', label: 'Name (e.g. Rent, Savings)', initial: '' },
+        ];
+        if (allocType === 'fixed') {
+          fields.push({ name: 'amount', label: 'Amount (e.g. 500)', initial: '' });
+        } else {
+          fields.push({ name: 'percent', label: 'Percent (e.g. 10)', initial: '' });
+        }
+        fields.push({ name: 'priority', label: 'Priority (lower = first, default 100)', initial: '100' });
+
+        createFormPrompt({
+          screen,
+          title: `Add ${allocType} allocation`,
+          fields,
+          onSubmit: async (v) => {
+            const name = String(v.name || '').trim();
+            if (!name) return createMessage({ screen, title: 'Error', message: 'Name is required' });
+            const pri = Number(v.priority) || 100;
+
+            if (allocType === 'fixed') {
+              const cents = parseAmountToCents(v.amount);
+              if (cents == null) return createMessage({ screen, title: 'Error', message: 'Invalid amount' });
+              await db.run(
+                `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES (?, 'fixed', ?, 0, ?)`,
+                [name, cents, pri]
+              );
+            } else {
+              const pct = Number(v.percent);
+              if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return createMessage({ screen, title: 'Error', message: 'Percent must be 1-100' });
+              await db.run(
+                `INSERT INTO allocations (name, alloc_type, amount_cents, percent, priority) VALUES (?, 'percent', 0, ?, ?)`,
+                [name, pct, pri]
+              );
+            }
+            await refreshAllocations();
+          }
+        });
+      }
+    });
+  });
+
+  view.allocations.list.key(['enter'], () => {
+    const id = selectedIdFromTable(view.allocations);
+    if (!id) return;
+    (async () => {
+      try {
+        const a = await db.get(`SELECT * FROM allocations WHERE id=?`, [id]);
+        if (!a) return;
+        const fields = [
+          { name: 'name', label: 'Name', initial: a.name },
+        ];
+        if (a.alloc_type === 'fixed') {
+          fields.push({ name: 'amount', label: 'Amount', initial: centsToAmountInput(a.amount_cents) });
+        } else {
+          fields.push({ name: 'percent', label: 'Percent', initial: String(a.percent) });
+        }
+        fields.push({ name: 'priority', label: 'Priority (lower = first)', initial: String(a.priority) });
+
+        createFormPrompt({
+          screen,
+          title: `Edit allocation #${id} (${a.alloc_type})`,
+          fields,
+          onSubmit: async (v) => {
+            const name = String(v.name || '').trim() || a.name;
+            const pri = Number(v.priority) || a.priority;
+            if (a.alloc_type === 'fixed') {
+              const cents = parseAmountToCents(v.amount);
+              if (cents == null) return createMessage({ screen, title: 'Error', message: 'Invalid amount' });
+              await db.run(
+                `UPDATE allocations SET name=?, amount_cents=?, priority=? WHERE id=?`,
+                [name, cents, pri, id]
+              );
+            } else {
+              const pct = Number(v.percent);
+              if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return createMessage({ screen, title: 'Error', message: 'Percent must be 1-100' });
+              await db.run(
+                `UPDATE allocations SET name=?, percent=?, priority=? WHERE id=?`,
+                [name, pct, pri, id]
+              );
+            }
+            await refreshAllocations();
+            selectRowById(view.allocations, id);
+          }
+        });
+      } catch (e) {
+        createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+      }
+    })();
+  });
+
+  view.allocations.list.key(['delete', 'backspace'], () => {
+    const id = selectedIdFromTable(view.allocations);
+    if (!id) return;
+    (async () => {
+      try {
+        const a = await db.get(`SELECT * FROM allocations WHERE id=?`, [id]);
+        if (!a) return;
+        createSelectPrompt({
+          screen,
+          title: `Allocation: ${a.name}`,
+          options: ['Toggle active/inactive', 'Delete permanently'],
+          initialIndex: 0,
+          onSelect: async (choice) => {
+            if (choice === 'Toggle active/inactive') {
+              await db.run(`UPDATE allocations SET active = NOT active WHERE id=?`, [id]);
+            } else {
+              await db.run(`DELETE FROM allocations WHERE id=?`, [id]);
+            }
+            await refreshAllocations();
+          }
+        });
+      } catch (e) {
+        createMessage({ screen, title: 'Error', message: e?.message || String(e) });
+      }
+    })();
+  });
+
   // CSV Export
   screen.key(['e'], () => {
     if (currentView === 'dashboard') {
-      createMessage({ screen, title: 'Export', message: 'Export is available from list views (t, r, g, b, m).' });
+      createMessage({ screen, title: 'Export', message: 'Export is available from list views (t, r, g, b, m, l).' });
       return;
     }
 
@@ -2135,6 +2332,17 @@ async function main() {
             return [t.id, t.date, t.destination, t.miles, formatCents(t.gas_cost_cents), formatCents(t.other_cost_cents), formatCents(t.income_cents), formatCents(net), t.note || ''];
           });
           filename = 'trips.csv';
+        } else if (currentView === 'allocations') {
+          const today = isoDateOnly(new Date());
+          const { start, end } = monthRange(today);
+          const result = await computeAllocations(db, start, end);
+          columns = ['ID', 'Priority', 'Name', 'Type', 'Rule', 'Needed', 'Funded', 'Shortfall', 'Status'];
+          rows = result.items.map(a => [
+            a.id, a.priority, a.name, a.alloc_type,
+            a.alloc_type === 'fixed' ? formatCents(a.amount_cents) : `${a.percent}%`,
+            formatCents(a.needed), formatCents(a.funded), formatCents(a.shortfall), a.status
+          ]);
+          filename = 'allocations.csv';
         } else {
           return;
         }

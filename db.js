@@ -101,6 +101,17 @@ export async function initDb() {
     );
 
     INSERT OR IGNORE INTO vehicle_settings (id, mpg, gas_price_cents) VALUES (1, 25.0, 350);
+
+    CREATE TABLE IF NOT EXISTS allocations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      alloc_type TEXT NOT NULL CHECK (alloc_type IN ('fixed','percent')),
+      amount_cents INTEGER NOT NULL DEFAULT 0 CHECK (amount_cents >= 0),
+      percent REAL NOT NULL DEFAULT 0 CHECK (percent >= 0 AND percent <= 100),
+      priority INTEGER NOT NULL DEFAULT 100,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Migrate: add odometer columns to existing trips table if missing
@@ -251,6 +262,51 @@ export async function getMonthlyTripSummary(db, start, end) {
   const profitPerMile = row.total_miles > 0 ? Math.round(netProfit / row.total_miles) : 0;
   const irsDeduction = Math.round(row.total_miles * IRS_MILEAGE_RATE_CENTS);
   return { ...row, totalCost, netProfit, costPerMile, profitPerMile, irsDeduction };
+}
+
+export async function computeAllocations(db, start, end) {
+  const incomeRow = await db.get(
+    `SELECT COALESCE(SUM(amount_cents),0) AS total
+     FROM transactions WHERE type='income' AND date BETWEEN ? AND ?`,
+    [start, end]
+  );
+  const totalIncome = incomeRow.total;
+
+  const allocs = await db.all(
+    `SELECT * FROM allocations ORDER BY priority ASC, id ASC`
+  );
+
+  let remaining = totalIncome;
+  const results = [];
+
+  for (const a of allocs) {
+    let needed;
+    if (a.alloc_type === 'fixed') {
+      needed = a.amount_cents;
+    } else {
+      needed = Math.round((a.percent / 100) * totalIncome);
+    }
+
+    let funded = 0;
+    if (a.active) {
+      funded = Math.min(needed, Math.max(0, remaining));
+      remaining -= funded;
+    }
+
+    const pct = needed > 0 ? Math.round((funded / needed) * 100) : (a.active ? 100 : 0);
+    const status = !a.active ? 'off' : funded >= needed ? 'funded' : funded > 0 ? 'partial' : 'unfunded';
+
+    results.push({
+      ...a,
+      needed,
+      funded,
+      shortfall: Math.max(0, needed - funded),
+      pct,
+      status
+    });
+  }
+
+  return { totalIncome, allocated: totalIncome - remaining, unallocated: remaining, items: results };
 }
 
 export function addMonths(dateStr, months, dayOfMonth) {

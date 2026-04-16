@@ -1285,7 +1285,8 @@ async function main() {
 
   async function refresh() {
     try {
-      if (currentView === 'dashboard') await refreshDashboard();
+      // Always keep the dashboard fresh so it's up-to-date when you switch back
+      await refreshDashboard();
       if (currentView === 'tx') await refreshTx();
       if (currentView === 'recurring') await refreshRecurring();
       if (currentView === 'goals') await refreshGoals();

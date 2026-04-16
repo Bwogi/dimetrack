@@ -1245,12 +1245,31 @@ async function main() {
       screen,
       title: ' DimeTrack Help ',
       message:
-        '◆ Navigation ─ d:Dashboard  t:Transactions  r:Recurring  g:Goals  b:Budgets  m:Trips\n' +
-        '               Tab / Shift+Tab to cycle views\n' +
-        '◆ Actions ──── a:add  enter:edit  del:delete/toggle  p:post recurring  v:vehicle(trips)\n' +
-        '◆ Search ───── /:search text  f:date range (transactions only)\n' +
-        '◆ Export ───── e:export current view to CSV\n' +
-        '◆ Quit ─────── q:confirm quit   Ctrl+C:immediate'
+        '{bold}◆ Navigation{/bold}\n' +
+        '  d  Dashboard        t  Transactions     r  Recurring\n' +
+        '  g  Goals            b  Budgets          m  Trips & Mileage\n' +
+        '  Tab / Shift+Tab     Cycle through views\n' +
+        '\n' +
+        '{bold}◆ Actions (all list views){/bold}\n' +
+        '  a      Add new item            enter  Edit selected item\n' +
+        '  del    Delete / toggle active   /      Search / filter text\n' +
+        '  e      Export current view to CSV\n' +
+        '\n' +
+        '{bold}◆ View-specific{/bold}\n' +
+        '  p      Post recurring item as transaction  (Recurring view)\n' +
+        '  f      Date range filter                   (Transactions view)\n' +
+        '  v      Vehicle settings (MPG, gas price)   (Trips view)\n' +
+        '\n' +
+        '{bold}◆ Views at a glance{/bold}\n' +
+        '  Dashboard     Monthly income/expense, goal bars, budget alerts, trip stats\n' +
+        '  Transactions  Color-coded income (green) / expense (red), summary totals\n' +
+        '  Recurring     Urgency: overdue/upcoming, monthly & weekly cost summaries\n' +
+        '  Goals         Progress bars, saved/target, overall completion %\n' +
+        '  Budgets       Usage bars, OVER/WARN/OK badges, overall spending summary\n' +
+        '  Trips         Profitability, cost/mi, IRS deduction @ $0.70/mi\n' +
+        '\n' +
+        '{bold}◆ Quit{/bold}\n' +
+        '  q  Confirm quit     Ctrl+C  Immediate exit'
     });
   });
 

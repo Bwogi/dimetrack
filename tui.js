@@ -2228,7 +2228,7 @@ async function main() {
           screen,
           title: `Delete "${a.name}"?`,
           message: `Remove ${a.name} (${a.alloc_type === 'fixed' ? formatCents(a.amount_cents) : a.percent + '%'}/mo) from your plan?`,
-          onConfirm: async () => {
+          onYes: async () => {
             await db.run(`DELETE FROM allocations WHERE id=?`, [id]);
             await refreshAllocations();
           }
@@ -2244,7 +2244,7 @@ async function main() {
       screen,
       title: 'Auto-fill from your bills?',
       message: 'Look at your recurring bills and spending to add anything missing?',
-      onConfirm: async () => {
+      onYes: async () => {
         try {
           const count = await autoGenerateAllocations(db);
           createMessage({

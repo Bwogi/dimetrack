@@ -81,9 +81,20 @@ async function computeDashboard(db, todayIso) {
   );
 
   const goals = await db.all(`SELECT * FROM goals ORDER BY created_at DESC`);
+  // Overdue items (past due, not yet posted)
+  const overdueRecurring = await db.all(
+    `SELECT * FROM recurring WHERE active=1 AND next_due_date < ? ORDER BY next_due_date ASC`,
+    [todayIso]
+  );
+  // Upcoming items (due today or later)
   const upcomingRecurring = await db.all(
     `SELECT * FROM recurring WHERE active=1 AND next_due_date >= ? ORDER BY next_due_date ASC LIMIT 10`,
     [todayIso]
+  );
+  // Recently posted this month (transactions from recurring)
+  const postedThisMonth = await db.all(
+    `SELECT * FROM transactions WHERE date BETWEEN ? AND ? AND note LIKE '%[auto-posted%' ORDER BY date DESC`,
+    [start, end]
   );
 
   return {
@@ -93,7 +104,9 @@ async function computeDashboard(db, todayIso) {
     expenseCents: expenseRow.total,
     netCents: incomeRow.total - expenseRow.total,
     goals,
-    upcomingRecurring
+    overdueRecurring,
+    upcomingRecurring,
+    postedThisMonth
   };
 }
 
@@ -774,17 +787,38 @@ async function main() {
     lines.push(sep);
 
     lines.push('');
-    lines.push('{bold}  📅 Upcoming Recurring{/bold}');
-    if (!dash.upcomingRecurring.length) {
-      lines.push('  {gray-fg}No upcoming items{/gray-fg}');
-    } else {
+    lines.push('{bold}  📅 Recurring Bills{/bold}');
+
+    if (dash.overdueRecurring.length) {
+      lines.push('  {red-fg}{bold}OVERDUE:{/bold}{/red-fg}');
+      for (const r of dash.overdueRecurring) {
+        const typeTag = r.type === 'expense' ? '{red-fg}expense{/red-fg}' : '{green-fg}income{/green-fg}';
+        lines.push(`  {red-fg}${r.next_due_date}{/red-fg}  ${r.name.padEnd(18)}  ${typeTag}  ${formatCents(r.amount_cents).padStart(10)}  {red-fg}overdue!{/red-fg}`);
+      }
+    }
+
+    if (dash.postedThisMonth.length) {
+      lines.push('  {green-fg}{bold}Paid this month:{/bold}{/green-fg}');
+      for (const t of dash.postedThisMonth) {
+        const typeTag = t.type === 'expense' ? '{red-fg}expense{/red-fg}' : '{green-fg}income{/green-fg}';
+        lines.push(`  {green-fg}✓ ${t.date}{/green-fg}  ${t.category.padEnd(18)}  ${typeTag}  ${formatCents(t.amount_cents).padStart(10)}`);
+      }
+    }
+
+    if (dash.upcomingRecurring.length) {
+      lines.push('  {bold}Coming up:{/bold}');
       for (const r of dash.upcomingRecurring) {
         const typeTag = r.type === 'expense' ? '{red-fg}expense{/red-fg}' : '{green-fg}income{/green-fg}';
         const daysLeft = Math.round((new Date(`${r.next_due_date}T00:00:00`) - new Date(`${today}T00:00:00`)) / 86400000);
         const urgency = daysLeft <= 3 ? '{red-fg}' : daysLeft <= 7 ? '{yellow-fg}' : '{gray-fg}';
         const urgencyClose = daysLeft <= 3 ? '{/red-fg}' : daysLeft <= 7 ? '{/yellow-fg}' : '{/gray-fg}';
-        lines.push(`  ${urgency}${r.next_due_date}${urgencyClose}  ${r.name.padEnd(18)}  ${typeTag}  ${formatCents(r.amount_cents).padStart(10)}  {gray-fg}${r.cadence}{/gray-fg}`);
+        const daysLabel = daysLeft === 0 ? '{yellow-fg}today{/yellow-fg}' : daysLeft === 1 ? '{yellow-fg}tomorrow{/yellow-fg}' : `${urgency}in ${daysLeft} days${urgencyClose}`;
+        lines.push(`  ${urgency}${r.next_due_date}${urgencyClose}  ${r.name.padEnd(18)}  ${typeTag}  ${formatCents(r.amount_cents).padStart(10)}  ${daysLabel}`);
       }
+    }
+
+    if (!dash.overdueRecurring.length && !dash.postedThisMonth.length && !dash.upcomingRecurring.length) {
+      lines.push('  {gray-fg}No recurring items{/gray-fg}');
     }
 
     const budgets = await db.all(`SELECT * FROM budgets ORDER BY type ASC, category ASC`);
